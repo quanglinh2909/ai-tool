@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Canvas Video Stream với dữ liệu Binary</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        canvas {
+            border: 2px solid #333;
+            margin-top: 10px;
+            background-color: #f0f0f0;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .controls {
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            padding: 8px 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            width: 80%;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .connected {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+
+        .disconnected {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+
+        .coordinates-container {
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-family: monospace;
+            resize: vertical;
+        }
+
+        .fps-counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        /*//round button*/
+
+        .knob-container {
+            position: relative;
+            width: 100px;
+            height: 100px;
+        }
+
+        .knob {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, #3498db, #9b59b6, #e74c3c, #f1c40f, #2ecc71, #3498db);
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            cursor: grab;
+            position: relative;
+        }
+
+        .knob:active {
+            cursor: grabbing;
+        }
+
+        .knob::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80px;
+            height: 80px;
+            background-color: white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .indicator {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 4px;
+            height: 20px;
+            background-color: black;
+            transform-origin: bottom center;
+            transform: translateX(-50%);
+        }
+
+        .center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background-color: black;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 2;
+        }
+
+        .arrow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 40%;
+            height: 4px;
+            background-color: #e74c3c;
+            transform-origin: left center;
+            z-index: 1;
+        }
+
+        .arrow::after {
+            content: "";
+            position: absolute;
+            right: -8px;
+            top: -8px;
+            border-left: 10px solid #e74c3c;
+            border-top: 10px solid transparent;
+            border-bottom: 10px solid transparent;
+        }
+
+        .value-display {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #333;
+            padding: 0.5rem 1rem;
+            border: 2px solid #ddd;
+            border-radius: 0.5rem;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        .input-range {
+            width: 80%;
+            margin-top: 10px;
+        }
+
+        /*v --------------------------*/
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Video Stream với Vùng Chọn</h2>
+    <div class="controls">
+        <button onclick="clearPoints()">🗑️ Xoá hết</button>
+        <button onclick="getCoordinates()">📍 Lấy tọa độ</button>
+        <button onclick="reconnectWebSocket()">🔄 Kết nối lại</button>
+    </div>
+    <div id="status" class="status disconnected">Đang kết nối...</div>
+    <div style="position: relative;">
+        <canvas id="canvas" width="640" height="480"></canvas>
+        <div id="fps" class="fps-counter">0 FPS</div>
+    </div>
+    <div id="coordinates-container" class="coordinates-container" style="display: none;">
+        <h3>Tọa độ của các điểm:</h3>
+        <textarea id="coordinates-text" readonly></textarea>
+    </div>
+    <div>
+
+        <div class="knob-container">
+            <div class="knob">
+                <div class="center-dot"></div>
+                <div class="arrow" id="arrow"></div>
+                <div class="indicator" id="indicator"></div>
+            </div>
+        </div>
+
+        <div class="value-display" id="angle-value">0°</div>
+
+        <input type="range" min="0" max="360" value="0" class="input-range" id="angle-slider">
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const statusElement = document.getElementById("status");
+    const fpsElement = document.getElementById("fps");
+    const coordsContainer = document.getElementById("coordinates-container");
+    const coordsText = document.getElementById("coordinates-text");
+
+    const knob = document.querySelector('.knob');
+    const angleValue = document.getElementById('angle-value');
+    const arrow = document.getElementById('arrow');
+    const indicator = document.getElementById('indicator');
+    const angleSlider = document.getElementById('angle-slider');
+    let isDragging = false;
+    let currentAngle = 0;
+
+
+    let points = [];
+    let draggingPointIndex = -1;
+    let draggingPolygon = false;
+    let dragStart = {x: 0, y: 0};
+    const radius = 6;
+    let socket = null;
+    let isConnected = false;
+
+    // Biến để tính FPS
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let fps = 0;
+
+    // Khởi tạo kết nối WebSocket
+    function initWebSocket() {
+        // Đóng kết nối cũ nếu có
+        if (socket) {
+            socket.close();
+        }
+
+        statusElement.textContent = "Đang kết nối...";
+        statusElement.className = "status disconnected";
+
+        // Tạo kết nối mới
+        socket = new WebSocket('ws://localhost:8654/ws/video');
+
+        // Thiết lập để nhận dữ liệu dạng arrayBuffer
+        socket.binaryType = "arraybuffer";
+
+        // Xử lý sự kiện khi kết nối mở
+        socket.onopen = function (event) {
+            console.log("Kết nối WebSocket đã được thiết lập");
+            statusElement.textContent = "Đã kết nối đến server video";
+            statusElement.className = "status connected";
+            isConnected = true;
+        };
+
+        // Xử lý sự kiện khi nhận được dữ liệu binary từ WebSocket
+        socket.onmessage = function (event) {
+            const data = event.data;
+
+            if (data instanceof ArrayBuffer) {
+                // Chuyển đổi ArrayBuffer thành Blob
+                const blob = new Blob([new Uint8Array(data)], {type: 'image/jpeg'});
+
+                // Tạo đối tượng URL từ Blob
+                const url = URL.createObjectURL(blob);
+
+                // Tạo Image từ URL
+                const img = new Image();
+                img.onload = function () {
+                    // Xóa canvas trước khi vẽ hình mới
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    // Vẽ hình lên canvas
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    // Vẽ lại đa giác sau khi cập nhật hình ảnh
+                    drawFrame();
+
+                    // Giải phóng URL sau khi sử dụng
+                    URL.revokeObjectURL(url);
+
+                    // Cập nhật FPS
+                    frameCount++;
+                    const now = performance.now();
+                    const delta = now - lastTime;
+                    if (delta >= 1000) {
+                        fps = Math.round((frameCount * 1000) / delta);
+                        fpsElement.textContent = fps + " FPS";
+                        frameCount = 0;
+                        lastTime = now;
+                    }
+                };
+                img.src = url;
+            }
+        };
+
+        // Xử lý lỗi WebSocket
+        socket.onerror = function (event) {
+            console.error("Lỗi WebSocket:", event);
+            statusElement.textContent = "Lỗi kết nối đến server video";
+            statusElement.className = "status disconnected";
+            isConnected = false;
+        };
+
+        // Xử lý khi kết nối đóng
+        socket.onclose = function (event) {
+            console.log("Kết nối WebSocket đã đóng:", event.code, event.reason);
+            statusElement.textContent = "Kết nối đến server video bị ngắt";
+            statusElement.className = "status disconnected";
+            isConnected = false;
+        };
+    }
+
+    // Hàm kết nối lại WebSocket
+    function reconnectWebSocket() {
+        statusElement.textContent = "Đang kết nối lại...";
+        statusElement.className = "status disconnected";
+        initWebSocket();
+    }
+
+    // Hàm vẽ khung vẽ điểm và vùng
+    function drawFrame() {
+        if (points.length > 1) {
+            // Vẽ đa giác
+            ctx.strokeStyle = "lime";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            if (points.length > 2) {
+                ctx.closePath();
+            }
+            ctx.stroke();
+
+            // Vẽ vùng đa giác với màu nửa trong suốt
+            if (points.length > 2) {
+                ctx.fillStyle = "rgba(0, 255, 0, 0.2)";
+                ctx.fill();
+            }
+
+            // ve mui ten
+            const arrow = getPointArrow();
+            if (arrow) {
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(arrow.start[0], arrow.start[1]);
+                ctx.lineTo(arrow.end[0], arrow.end[1]);
+                ctx.stroke();
+
+                // Vẽ đầu mũi tên
+                const headlen = 10; // Độ dài đầu mũi tên
+                const angle = Math.atan2(arrow.end[1] - arrow.start[1], arrow.end[0] - arrow.start[0]);
+                ctx.beginPath();
+                ctx.moveTo(arrow.end[0], arrow.end[1]);
+                ctx.lineTo(arrow.end[0] - headlen * Math.cos(angle - Math.PI / 6), arrow.end[1] - headlen * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(arrow.end[0] - headlen * Math.cos(angle + Math.PI / 6), arrow.end[1] - headlen * Math.sin(angle + Math.PI / 6));
+                ctx.closePath();
+                ctx.fillStyle = "red";
+                ctx.fill();
+            }
+        }
+
+        // Vẽ các điểm
+        ctx.fillStyle = "red";
+        for (let p of points) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    function getMousePos(evt) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: (evt.clientX - rect.left) * (canvas.width / rect.width),
+            y: (evt.clientY - rect.top) * (canvas.height / rect.height)
+        };
+    }
+
+    function findNearbyPoint(x, y) {
+        for (let i = 0; i < points.length; i++) {
+            const dx = points[i].x - x;
+            const dy = points[i].y - y;
+            if (dx * dx + dy * dy <= radius * radius) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    function isInsidePolygon(x, y) {
+        if (points.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+            const xi = points[i].x, yi = points[i].y;
+            const xj = points[j].x, yj = points[j].y;
+            const intersect = ((yi > y) !== (yj > y)) &&
+                (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    canvas.addEventListener("mousedown", function (event) {
+        const {x, y} = getMousePos(event);
+
+        if (event.button === 0) { // Chuột trái để di chuyển điểm hoặc thêm điểm
+            const idx = findNearbyPoint(x, y);
+            if (idx !== -1) {
+                // Nếu gần điểm, kéo điểm đó
+                draggingPointIndex = idx;
+                canvas.style.cursor = "grabbing";
+            } else if (points.length >= 3 && isInsidePolygon(x, y)) {
+                // Nếu chuột trong vùng, kéo toàn bộ đa giác
+                draggingPolygon = true;
+                dragStart = {x, y};
+                canvas.style.cursor = "grabbing";
+            } else {
+                // Nếu không gần điểm nào và không trong đa giác, thêm điểm mới
+                points.push({x, y});
+            }
+        }
+    });
+
+    canvas.addEventListener("mousemove", function (event) {
+        const {x, y} = getMousePos(event);
+
+        // Di chuyển điểm bằng chuột trái
+        if (draggingPointIndex !== -1 && event.buttons === 1) {
+            points[draggingPointIndex] = {x, y};
+            return;
+        }
+
+        // Kéo vùng bằng chuột trái
+        if (draggingPolygon && event.buttons === 1) {
+            const dx = x - dragStart.x;
+            const dy = y - dragStart.y;
+            points = points.map(p => ({x: p.x + dx, y: p.y + dy}));
+            dragStart = {x, y};
+            return;
+        }
+
+        // Thay đổi con trỏ chuột
+        const isNearPoint = findNearbyPoint(x, y) !== -1;
+        const isInPoly = points.length >= 3 && isInsidePolygon(x, y);
+        if (isNearPoint) {
+            canvas.style.cursor = "pointer";
+        } else if (isInPoly) {
+            canvas.style.cursor = "grab";
+        } else {
+            canvas.style.cursor = "crosshair";
+        }
+    });
+
+    canvas.addEventListener("mouseup", function (event) {
+        draggingPointIndex = -1;
+        draggingPolygon = false;
+
+        const {x, y} = getMousePos(event);
+        const isNearPoint = findNearbyPoint(x, y) !== -1;
+        const isInPoly = points.length >= 3 && isInsidePolygon(x, y);
+
+        if (isNearPoint) {
+            canvas.style.cursor = "pointer";
+        } else if (isInPoly) {
+            canvas.style.cursor = "grab";
+        } else {
+            canvas.style.cursor = "crosshair";
+        }
+    });
+
+    // Nhấn chuột phải vào điểm sẽ xoá nó
+    canvas.addEventListener("contextmenu", function (event) {
+        event.preventDefault(); // Ngăn menu chuột phải mặc định
+        const {x, y} = getMousePos(event);
+        const idx = findNearbyPoint(x, y);
+        if (idx !== -1) {
+            points.splice(idx, 1);
+        }
+    });
+
+    function clearPoints() {
+        points = [];
+        coordsContainer.style.display = 'none';
+    }
+
+    function getPointArrow() {
+        if (points.length < 3) {
+            return null
+        }
+
+        // Convert points to array format (equivalent to numpy's np.array)
+        const roi_points = points.map(p => [Math.round(p.x), Math.round(p.y)]);
+
+        // Calculate mean point (center) for arrow start
+        const arrow_start = roi_points.reduce(
+            (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+            [0, 0]
+        ).map(val => Math.round(val / roi_points.length));
+
+        const arrow_length = 100; // Can adjust arrow length
+
+        function calculateArrowEnd(start_point, angle_degrees, length) {
+            // Convert angle from degrees to radians
+            const angle_radians = angle_degrees * Math.PI / 180;
+
+            // Calculate coordinates of end point based on angle
+            // Note: In y-down coordinate system (like in canvas/images), 0 degrees is right,
+            // and angle increases clockwise
+            const dx = length * Math.cos(angle_radians);
+            const dy = length * Math.sin(angle_radians);
+
+            // Calculate end point
+            const end_x = Math.round(start_point[0] + dx);
+            const end_y = Math.round(start_point[1] + dy);
+
+            return [end_x, end_y];
+        }
+
+        const angle = currentAngle; // Can be changed from 0 to 360 degrees
+        const arrow_end = calculateArrowEnd(arrow_start, angle, arrow_length);
+        const arrow = {
+            start: arrow_start,
+            end: arrow_end
+        };
+        return arrow;
+
+
+    }
+
+    function getCoordinates() {
+        if (points.length < 3) {
+            alert("Vui lòng vẽ ít nhất 3 điểm để tạo thành một vùng.");
+            return;
+        }
+
+        console.log("Tọa độ:", points);
+        const jsonCoords = JSON.stringify(points, null, 2);
+
+        // Hiển thị tọa độ trong textarea
+        coordsText.value = jsonCoords;
+        coordsContainer.style.display = 'block';
+
+        // Cuộn xuống để hiển thị textarea
+        coordsContainer.scrollIntoView({behavior: 'smooth'});
+
+        // Tùy chọn: Thông báo và sao chép vào clipboard
+        navigator.clipboard.writeText(jsonCoords)
+            .then(() => {
+                alert("Đã lấy tọa độ của " + points.length + " điểm và sao chép vào clipboard.");
+            })
+            .catch(() => {
+                alert("Đã lấy tọa độ của " + points.length + " điểm. Bạn có thể sao chép từ hộp bên dưới.");
+            });
+    }
+
+    // Khởi tạo canvas ban đầu
+    ctx.fillStyle = "#f0f0f0";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000";
+    ctx.font = "20px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("Đang kết nối đến server video...", canvas.width / 2, canvas.height / 2);
+
+    // Khởi tạo kết nối WebSocket
+    initWebSocket();
+
+    // Function to update the UI with the current angle
+    function updateAngleDisplay(angle) {
+        // Ensure angle is between 0 and 360
+        angle = (angle % 360 + 360) % 360;
+
+        // Update displayed value
+        angleValue.textContent = Math.round(angle) + '°';
+
+        // Update arrow rotation
+        arrow.style.transform = `rotate(${angle}deg)`;
+        indicator.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+
+        // Update slider value
+        angleSlider.value = Math.round(angle);
+
+        return angle;
+    }
+
+    // Function to calculate angle based on mouse position
+    function calculateAngle(event) {
+        const knobRect = knob.getBoundingClientRect();
+        const knobCenterX = knobRect.left + knobRect.width / 2;
+        const knobCenterY = knobRect.top + knobRect.height / 2;
+
+        const mouseX = event.clientX;
+        const mouseY = event.clientY;
+
+        const deltaX = mouseX - knobCenterX;
+        const deltaY = mouseY - knobCenterY;
+
+        // Calculate angle in radians and convert to degrees
+        let angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+
+        // Adjust angle so 0 is at top and increases clockwise
+        angle = (angle + 90) % 360;
+        if (angle < 0) angle += 360;
+
+        return angle;
+    }
+
+    // Mouse event handlers
+    knob.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        currentAngle = calculateAngle(e);
+        updateAngleDisplay(currentAngle);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            currentAngle = calculateAngle(e);
+            updateAngleDisplay(currentAngle);
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+
+    // Touch event handlers for mobile
+    knob.addEventListener('touchstart', (e) => {
+        isDragging = true;
+        currentAngle = calculateAngle(e.touches[0]);
+        updateAngleDisplay(currentAngle);
+        e.preventDefault(); // Prevent scroll
+    });
+
+    document.addEventListener('touchmove', (e) => {
+        if (isDragging) {
+            currentAngle = calculateAngle(e.touches[0]);
+            updateAngleDisplay(currentAngle);
+            e.preventDefault(); // Prevent scroll
+        }
+    });
+
+    document.addEventListener('touchend', () => {
+        isDragging = false;
+    });
+
+    // Slider control
+    angleSlider.addEventListener('input', (e) => {
+        currentAngle = parseInt(e.target.value);
+        updateAngleDisplay(currentAngle);
+    });
+
+    // Initialize with 0 degrees
+    updateAngleDisplay(0);
+</script>
+</body>
+</html>
