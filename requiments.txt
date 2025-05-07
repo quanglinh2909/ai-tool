@@ -1,0 +1,6 @@
+fastapi[standard]
+piccolo[sqlite]
+opencv-python
+numpy
+requests
+ultralytics

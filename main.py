@@ -6,19 +6,24 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
-
+import os
 import uvicorn
 from fastapi import FastAPI
 
 from app.app import api_router
+from app.config.sqlite.load_table import get_all_tables
 from app.services.ai_plate_service import AIPlateService, ai_plate_service
+os.environ["PICCOLO_CONF"] = "app.config.sqlite.piccolo_conf"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ai_plate_service.add_camera(1, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
-    ai_plate_service.add_camera(2, "rtsp://admin:Oryza123@192.168.104.108:554/cam/realmonitor?channel=1&subtype=0")
+    await get_all_tables()
 
+    # ai_plate_service.add_camera(1, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
+    # ai_plate_service.add_camera(2, "rtsp://admin:Oryza123@192.168.104.108:554/cam/realmonitor?channel=1&subtype=0")
+    # b = Director(name='C-Sharps')
+    # await b.save()
     print("Starting the server")
     yield
     print("Shutting down the server")

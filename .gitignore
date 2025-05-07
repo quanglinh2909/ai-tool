@@ -139,3 +139,4 @@ temp/*
 
 openapi.yaml
 openapi.json
+/assets
