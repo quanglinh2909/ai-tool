@@ -16,8 +16,8 @@ from app.services.ai_plate_service import AIPlateService, ai_plate_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ai_plate_service.add_camera(1, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
-    ai_plate_service.add_camera(1, "/home/linh/Documents/ai-tool/test/output_vao.avi")
+    ai_plate_service.add_camera(1, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
+    ai_plate_service.add_camera(2, "rtsp://admin:Oryza123@192.168.104.108:554/cam/realmonitor?channel=1&subtype=0")
 
     print("Starting the server")
     yield

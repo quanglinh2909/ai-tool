@@ -18,4 +18,4 @@ async def remove_camera():
 def draw_bounding_box(new_data:DrawBoundingBoxDTO):
     print(new_data)
 
-    return ai_plate_service.update_shared_array(1,new_data.data,new_data.angle)
+    return ai_plate_service.update_shared_array(new_data.camera_id,new_data.data,new_data.angle)

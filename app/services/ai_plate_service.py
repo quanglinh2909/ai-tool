@@ -6,6 +6,7 @@ import cv2
 import time
 import threading
 import numpy as np
+import requests
 from ultralytics import YOLO
 
 from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity, calculate_arrow_end
@@ -21,7 +22,7 @@ class AIPlateService:
         threading.Thread(target=self.check_processes, daemon=True).start()
 
     def worker(self, camera_id, rtsp,shared_array ,angle_shared,shm_name, shape, dtype, ready_event):
-        model = YOLO("/home/linh/Documents/ai-tool/model/vehicle_plate.pt")
+        model = YOLO("/home/orangepi/vehicle_plate_2_rknn_model")
         id_current = None
         time_event = time.time()
         time_wait = None
@@ -37,10 +38,14 @@ class AIPlateService:
         track_history = defaultdict(lambda: [])
         arrow_vector = (0, 0)
 
+        pipeline = (
+            f"rtspsrc location={rtsp} latency=0 drop-on-latency=true ! queue ! rtph264depay ! h264parse ! mppvideodec  !  videorate ! video/x-raw,format=NV12,framerate=15/1 ! "
+            f"appsink drop=true sync=false"
+        )
 
         while True:
             print(f"[INFO] Trying to connect to: {rtsp}")
-            cap = cv2.VideoCapture(rtsp)
+            cap = cv2.VideoCapture(pipeline)
             if not cap.isOpened():
                 print("[WARN] Cannot connect. Retrying in 5 seconds...")
                 time.sleep(5)
@@ -78,15 +83,15 @@ class AIPlateService:
 
 
                 ret, frame = cap.read()
-                # print(      np.array(shared_array).reshape(-1, 2))
                 if not ret:
                     print("[WARN] Lost frame. Reconnecting...")
                     break  # Thoát khỏi vòng lặp đọc để reconnect
-                frame = cv2.resize(frame, (640, 480))  # Resize the frame
+                frame = cv2.resize(frame, (640, 480))
+                # Chuyển đổi màu sắc từ BGR sang RGB
+                frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
+                # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGRA)
+                # frame = cv2.resize(frame, (640, 480))
 
-                np.copyto(frame_np, frame)
-                # Đánh dấu là đã sẵn sàng
-                ready_event.set()
 
                 # Tạo bản sao của frame để tránh vẽ đè lên
                 display_frame = frame.copy()
@@ -121,11 +126,13 @@ class AIPlateService:
                         if len(track) > 1:
                             points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
                             cv2.polylines(display_frame, [points], isClosed=False, color=(230, 230, 230), thickness=2)
+                            cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=2)
 
                         # Vẽ box cho đối tượng
                         x1, y1 = int(x - w / 2), int(y - h / 2)
                         x2, y2 = int(x + w / 2), int(y + h / 2)
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
 
                         in_roi = False
                         if roi_points is not None:
@@ -157,6 +164,7 @@ class AIPlateService:
                                         id_current = track_id
                                         time_event = time.time()
                                         print("Theo huong", track_id)
+                                        requests.get("http://192.168.103.97:8090/3")
                                 else:
                                     status = "Khong theo huong"
                                     color = (0, 0, 255)  # Đỏ
@@ -186,12 +194,22 @@ class AIPlateService:
                     following_count = sum(1 for value in objects_following_arrow.values() if value)
                     cv2.putText(display_frame, f"Trong vùng: {len(objects_in_roi)}", (20, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(frame, f"Trong vùng: {len(objects_in_roi)}", (20, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
                 if arrow_start is not None and arrow_end is not None:
                     cv2.putText(display_frame, f"Theo hướng mũi tên: {following_count}", (20, 60),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+                    cv2.putText(frame, f"Theo hướng mũi tên: {following_count}", (20, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+
                 # Display the annotated frame - chỉ gọi imshow một lần mỗi vòng lặp
+
+                np.copyto(frame_np, frame)
+                # # Đánh dấu là đã sẵn sàng
+                ready_event.set()
 
                 cv2.imshow(f'Camera: {camera_id}', display_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -217,7 +235,7 @@ class AIPlateService:
         # Chuyển đổi dữ liệu thành mảng numpy
         shared_data = np.array([[p["x"], p["y"]] for p in data_box], dtype=np.float64)
         shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
-        shape = (480, 640, 3)  # height, width, channels
+        shape = (320,640, 3)  # height, width, channels
         dtype = np.uint8
         size = np.prod(shape)  # 640 * 480 * 3 = 921600
         shm_global = shared_memory.SharedMemory(create=True, size=size)
@@ -227,7 +245,7 @@ class AIPlateService:
         angle = multiprocessing.Value('i', 0)
 
 
-        process = multiprocessing.Process(target=self.worker, args=(camera_id, rtsp,shared_array,angle,shm_global.name, shape, dtype, ready_event))
+        process = multiprocessing.Process(target=self.worker, args=(camera_id, rtsp,shared_array,angle,shm_global.name, shape, dtype, ready_event), daemon=True)
         process.start()
 
 
