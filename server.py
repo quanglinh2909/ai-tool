@@ -1,46 +1,43 @@
+import asyncio
 import time
+from multiprocessing import Process, shared_memory, Event
 
 import cv2
-import base64
-import asyncio
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from multiprocessing import Process, Queue, set_start_method
 
 app = FastAPI()
-frame_queue = Queue(maxsize=1)
 
+shape = (480, 640, 3)  # height, width, channels
+dtype = np.uint8
+size = np.prod(shape)  # 640 * 480 * 3 = 921600
 
-def capture_frames(queue):
+# Tạo vùng shared memory
+shm_global = shared_memory.SharedMemory(create=True, size=size)
+ready_event = Event()
+
+def capture_frames(shm_name, shape, dtype, ready_event):
     cap = cv2.VideoCapture("rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
-    # cap = cv2.VideoCapture("output_vao.avi")
-    if not cap.isOpened():
-        print("❌ Không thể mở camera!")
-        return
+    existing_shm = shared_memory.SharedMemory(name=shm_name)
+    frame_np = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    print("✅ Đã mở camera thành công, đang bắt đầu thu thập frame...")
-    try:
-        while True:
-            ret, frame = cap.read()
-            # time.sleep(1)
-            if not ret:
-                print("⚠️ Không đọc được frame từ camera")
-                continue
+        # Resize hoặc crop nếu frame không đúng kích thước
+        frame = cv2.resize(frame, (shape[1], shape[0]))
 
-            # Xóa frame cũ nếu queue đầy
-            if queue.full():
-                try:
-                    queue.get_nowait()
-                except:
-                    pass
+        # Ghi frame vào shared memory
+        np.copyto(frame_np, frame)
 
-            # Thêm frame mới vào queue
-            queue.put(frame)
-    except Exception as e:
-        print(f"❌ Lỗi khi đọc camera: {str(e)}")
-    finally:
-        cap.release()
-        print("📷 Đã đóng camera")
+        # Đánh dấu là đã sẵn sàng
+        ready_event.set()
+        time.sleep(0.01)
+
+    cap.release()
+    existing_shm.close()
 
 
 @app.websocket("/ws/video")
@@ -49,19 +46,18 @@ async def websocket_endpoint(websocket: WebSocket):
     print("🔌 Client đã kết nối WebSocket")
 
     try:
-        while True:
-            frame = None
-            # Lấy frame mới nhất từ queue
-            while not frame_queue.empty():
-                try:
-                    frame = frame_queue.get_nowait()
-                except:
-                    continue
+        shm = shared_memory.SharedMemory(name=shm_global.name)
+        frame_np = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
 
-            if frame is not None:
+        while True:
+            ready_event.wait()  # Đợi cho đến khi có frame mới
+
+            frame_copy = frame_np.copy()  # Copy ra riêng để tránh xung đột
+            ready_event.clear()  # Reset cờ
+
+            if frame_copy is not None:
                 # Encode frame thành JPEG
-                frame = cv2.resize(frame, (640, 480))  # Resize frame nếu cần
-                ret, buffer = cv2.imencode('.jpg', frame)
+                ret, buffer = cv2.imencode('.jpg', frame_copy)
                 # Gửi dữ liệu binary
                 await websocket.send_bytes(buffer.tobytes())
 
@@ -79,14 +75,15 @@ if __name__ == "__main__":
     print("🚀 Khởi động server video stream...")
 
     # Bắt đầu process để capture video
-    p = Process(target=capture_frames, args=(frame_queue,))
-    p.start()
+    reader = Process(target=capture_frames, args=(shm_global.shm_global, shape, dtype, ready_event))
+    reader.start()
+
     print("✅ Đã khởi động process thu thập video")
 
     try:
         uvicorn.run(app, host="0.0.0.0", port=8654)
     finally:
         print("🛑 Đang dừng server...")
-        p.terminate()
-        p.join()
+        reader.terminate()
+        reader.join()
         print("✅ Đã dừng process thu thập video")

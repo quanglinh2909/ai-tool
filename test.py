@@ -1,67 +1,55 @@
-import cv2
+import multiprocessing
 import numpy as np
-
-rtsp = "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0"
-rtsp = (
-    f'rtspsrc location={rtsp} latency=0 drop-on-latency=true '
-    f'! queue ! rtph264depay ! h264parse ! mppvideodec  !  videorate ! video/x-raw,format=NV12,framerate=10/1 ! appsink'
-)
-data = [
-  {
-    "x": 375.1552795031056,
-    "y": 64.64876033057851
-  },
-  {
-    "x": 403.9751552795031,
-    "y": 67.62396694214877
-  },
-  {
-    "x": 400.99378881987576,
-    "y": 76.54958677685951
-  },
-  {
-    "x": 375.1552795031056,
-    "y": 79.52479338842976
-  }
-]
-roi_points = np.array([[p["x"], p["y"]] for p in data], np.int32)
-
-cap = cv2.VideoCapture(rtsp)
-w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-
-# tinh lai toado roi
-# roi_points[:, 0] = roi_points[:, 0] * w / 640
-# roi_points[:, 1] = roi_points[:, 1] * h / 480
+import time
 
 
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        print("Không thể đọc frame từ camera")
-        break
-    _frame = frame.copy()
-    frame = cv2.resize(frame, (640, 480))
-    # Chuyển đổi màu sắc từ BGR sang RGB
-    frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
-    frame = cv2.resize(frame, (640, 480))
-    # Vẽ hình chữ nhật quanh vùng ROI
-    # cv2.polylines(_frame, [roi_points], isClosed=True, color=(0, 255, 0), thickness=2)
-    # # Vẽ các điểm trong vùng ROI
-    # for point in roi_points:
-    #     cv2.circle(_frame, tuple(point), 5, (0, 0, 255), -1)
-    # Vẽ các điểm trong vùng ROI
+def read_data(data):
+    while True:
+        # Convert shared array to numpy array
+        data_np = np.frombuffer(data.get_obj(), dtype=np.float64).reshape(-1, 2)
 
-    # crop hình chữ nhật quanh vùng ROI
-    x, y, w, h = cv2.boundingRect(roi_points)
-    roi = frame[y:y+h, x:x+w]
-    # roi = cv2.cvtColor(roi, cv2.COLOR_YUV2BGR_NV12)
-    cv2.imshow("ROI", roi)
+        # Create a list of dictionaries to print
+        data_box = [{"x": data_np[i][0], "y": data_np[i][1]} for i in range(len(data_np))]
+        print(data_box)
 
-    # Hiển thị frame
-    # cv2.imshow("Camera", _frame)
+        time.sleep(1)
 
-    # Nhấn 'q' để thoát
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-#     except WebSocketDisconnect:
+
+if __name__ == '__main__':
+    # Initial data
+    data_box = [
+        {"x": 41.73913043478261, "y": 426.6322314049587},
+        {"x": 290.18633540372673, "y": 160.8471074380165},
+        {"x": 449.1925465838509, "y": 83.49173553719007},
+        {"x": 616.1490683229814, "y": 124.15289256198346},
+        {"x": 595.27950310559, "y": 456.38429752066116}
+    ]
+
+    # Convert data to numpy array
+    shared_data = np.array([[p["x"], p["y"]] for p in data_box], dtype=np.float64)
+    shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' is float64
+
+    # Create and start the process
+    process1 = multiprocessing.Process(target=read_data, args=(shared_array,))
+    process1.start()
+
+    time.sleep(5)
+
+    # Update data in the main process
+    new_data = [
+        {"x": 100, "y": 200},
+        {"x": 300, "y": 400},
+        {"x": 500, "y": 600},
+        {"x": 700, "y": 800},
+        {"x": 900, "y": 1000}
+    ]
+
+    # Update the shared data array
+    updated_data = np.array([[p["x"], p["y"]] for p in new_data], dtype=np.float64)
+    np.copyto(np.frombuffer(shared_array.get_obj(), dtype=np.float64).reshape(-1, 2), updated_data)
+
+    # Allow some time for the process to read the updated data
+    time.sleep(5)
+
+    process1.terminate()  # Terminate the process
+    process1.join()  # Wait for the process to finish
