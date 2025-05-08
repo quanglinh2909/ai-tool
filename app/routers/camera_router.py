@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.dto.camera_dto import DrawBoundingBoxDTO, CameraDTO, CameraUpdateDTO
+from app.dto.camera_dto import DrawBoundingBoxDTO, CameraDTO, CameraUpdateDTO, GetRtspDTO
 from app.services.ai_plate_service import ai_plate_service
 from app.services.camera_service import camera_service
 
@@ -19,6 +19,10 @@ async def update(req: CameraUpdateDTO, camera_id: UUID):
 @router.delete("/remove-camera")
 async def remove_camera():
     return "Camera removed successfully"
+
+@router.post("/get-rtsp")
+def get_rtsp(req: GetRtspDTO):
+    return  camera_service.get_rtsp(req)
 
 @router.post("/draw-bounding-box")
 def draw_bounding_box(new_data:DrawBoundingBoxDTO):

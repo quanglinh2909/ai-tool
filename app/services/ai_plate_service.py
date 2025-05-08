@@ -9,6 +9,9 @@ import numpy as np
 import requests
 from ultralytics import YOLO
 
+from app.constants.platform_enum import PlatformEnum
+from app.ultils.camera_ultil import get_rtsp_platform, get_model_plate_platform
+from app.ultils.check_platform import get_os_name
 from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity, calculate_arrow_end
 
 
@@ -22,7 +25,9 @@ class AIPlateService:
         threading.Thread(target=self.check_processes, daemon=True).start()
 
     def worker(self, camera_id, rtsp,shared_array ,angle_shared,shm_name, shape, dtype, ready_event):
-        model = YOLO("/home/orangepi/vehicle_plate_2_rknn_model")
+        platform = get_os_name()
+        url_model = get_model_plate_platform(platform)
+        model = YOLO(get_model_plate_platform(url_model),task="detect")
         id_current = None
         time_event = time.time()
         time_wait = None
@@ -38,14 +43,11 @@ class AIPlateService:
         track_history = defaultdict(lambda: [])
         arrow_vector = (0, 0)
 
-        pipeline = (
-            f"rtspsrc location={rtsp} latency=0 drop-on-latency=true ! queue ! rtph264depay ! h264parse ! mppvideodec  !  videorate ! video/x-raw,format=NV12,framerate=15/1 ! "
-            f"appsink drop=true sync=false"
-        )
+        rtsp = get_rtsp_platform(rtsp,platform)
 
         while True:
             print(f"[INFO] Trying to connect to: {rtsp}")
-            cap = cv2.VideoCapture(pipeline)
+            cap = cv2.VideoCapture(rtsp)
             if not cap.isOpened():
                 print("[WARN] Cannot connect. Retrying in 5 seconds...")
                 time.sleep(5)
@@ -88,7 +90,8 @@ class AIPlateService:
                     break  # Thoát khỏi vòng lặp đọc để reconnect
                 frame = cv2.resize(frame, (640, 480))
                 # Chuyển đổi màu sắc từ BGR sang RGB
-                frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
+                if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
                 # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGRA)
                 # frame = cv2.resize(frame, (640, 480))
 
@@ -198,18 +201,18 @@ class AIPlateService:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
                 if arrow_start is not None and arrow_end is not None:
-                    cv2.putText(display_frame, f"Theo hướng mũi tên: {following_count}", (20, 60),
+                    cv2.putText(display_frame, f"Theo huong mui ten: {following_count}", (20, 60),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-                    cv2.putText(frame, f"Theo hướng mũi tên: {following_count}", (20, 60),
+                    cv2.putText(frame, f"Theo huong mui ten: {following_count}", (20, 60),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
 
                 # Display the annotated frame - chỉ gọi imshow một lần mỗi vòng lặp
-
-                np.copyto(frame_np, frame)
-                # # Đánh dấu là đã sẵn sàng
-                ready_event.set()
+                # frame = cv2.resize(frame, (640, 480))
+                # np.copyto(frame_np, frame)
+                # # # Đánh dấu là đã sẵn sàng
+                # ready_event.set()
 
                 cv2.imshow(f'Camera: {camera_id}', display_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -223,19 +226,16 @@ class AIPlateService:
             print("[INFO] Reconnecting in 5 seconds...")
             time.sleep(5)
 
-    def add_camera(self, camera_id, rtsp):
+    def add_camera(self, camera_id, rtsp,points):
         if camera_id in self.processes:
             print(f"Camera {camera_id} already running.")
             return
-        data_box = []
-        for i in range(1, 100):
-            data_box.append({"x": -1, "y": -1})
 
 
         # Chuyển đổi dữ liệu thành mảng numpy
-        shared_data = np.array([[p["x"], p["y"]] for p in data_box], dtype=np.float64)
+        shared_data = np.array([[p["x"], p["y"]] for p in points], dtype=np.float64)
         shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
-        shape = (320,640, 3)  # height, width, channels
+        shape = (480,640, 3)  # height, width, channels
         dtype = np.uint8
         size = np.prod(shape)  # 640 * 480 * 3 = 921600
         shm_global = shared_memory.SharedMemory(create=True, size=size)

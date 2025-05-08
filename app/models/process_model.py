@@ -1,6 +1,6 @@
 from typing import Any
 
-from piccolo.columns import ForeignKey, Boolean, Integer, Array, Varchar,JSON
+from piccolo.columns import ForeignKey, Boolean, Integer, Array, Varchar,JSON,Text
 
 from app.constants.type_ai_enum import TypeAIEnum
 from app.models.base_model import BaseModel

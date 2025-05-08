@@ -1,4 +1,5 @@
 import math
+from urllib.parse import quote
 
 
 def point_in_polygon(point, polygon):
@@ -59,3 +60,15 @@ def calculate_arrow_end(start_point, angle_degrees, length):
     end_y = int(start_point[1] + dy)
 
     return (end_x, end_y)
+def get_rtsp_encode(rtsp, user_name, password):
+    password = quote(password)
+    start_rtsp = f"rtsp://{user_name}:{password}@"
+    if start_rtsp in rtsp:
+        return rtsp
+    return rtsp.replace("rtsp://", start_rtsp)
+
+def get_rtsp_not_encode(rtsp, user_name, password):
+    start_rtsp = f"rtsp://{user_name}:{password}@"
+    if start_rtsp in rtsp:
+        return rtsp
+    return rtsp.replace("rtsp://", start_rtsp)

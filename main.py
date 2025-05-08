@@ -13,7 +13,10 @@ from fastapi import FastAPI
 from app.app import api_router
 from app.config.sqlite.load_table import get_all_tables
 from app.services.ai_plate_service import AIPlateService, ai_plate_service
+from app.services.process_ai_service import process_ai_service
+
 os.environ["PICCOLO_CONF"] = "app.config.sqlite.piccolo_conf"
+from app.websocket.websocket import router as api_router_ws
 
 
 @asynccontextmanager
@@ -24,6 +27,7 @@ async def lifespan(app: FastAPI):
     # ai_plate_service.add_camera(2, "rtsp://admin:Oryza123@192.168.104.108:554/cam/realmonitor?channel=1&subtype=0")
     # b = Director(name='C-Sharps')
     # await b.save()
+    await process_ai_service.init_porcess_ai()
     print("Starting the server")
     yield
     print("Shutting down the server")
@@ -36,6 +40,7 @@ app = FastAPI(
     title="ai Service",
     lifespan=lifespan,
 )
+app.include_router(api_router_ws, prefix="/ws")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,45 +50,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.websocket("/ws/video/{camera_id}")
-async def websocket_endpoint(websocket: WebSocket, camera_id: int):
-    await websocket.accept()
-    print("🔌 Client đã kết nối WebSocket")
-    if camera_id not in ai_plate_service.shared_memories:
-        print(f"❌ Không tìm thấy camera với ID {camera_id}")
-        await websocket.close()
-        return
-
-    data  = ai_plate_service.shared_memories[camera_id]
-    shape = data["shape"]
-    dtype = data["dtype"]
-    shm_global = data["shm"]
-    ready_event = data["ready_event"]
-
-
-    try:
-        shm = shared_memory.SharedMemory(name=shm_global.name)
-        frame_np = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
-
-        while True:
-            ready_event.wait()  # Đợi cho đến khi có frame mới
-
-            frame_copy = frame_np.copy()  # Copy ra riêng để tránh xung đột
-            ready_event.clear()  # Reset cờ
-
-            if frame_copy is not None:
-                # Encode frame thành JPEG
-                ret, buffer = cv2.imencode('.jpg', frame_copy)
-                # Gửi dữ liệu binary
-                await websocket.send_bytes(buffer.tobytes())
-
-            # Tạm dừng để không làm quá tải CPU
-            await asyncio.sleep(0.01)  # 100 FPS cap (thực tế sẽ thấp hơn do thời gian encode)
-
-    except WebSocketDisconnect:
-        print("⚠️ WebSocket bị ngắt kết nối")
-    except Exception as e:
-        print(f"❌ Lỗi WebSocket: {str(e)}")
+# @app.websocket("/ws/video/{camera_id}")
+# async def websocket_endpoint(websocket: WebSocket, camera_id: int):
+#     await websocket.accept()
+#     print("🔌 Client đã kết nối WebSocket")
+#     if camera_id not in ai_plate_service.shared_memories:
+#         print(f"❌ Không tìm thấy camera với ID {camera_id}")
+#         await websocket.close()
+#         return
+#
+#     data  = ai_plate_service.shared_memories[camera_id]
+#     shape = data["shape"]
+#     dtype = data["dtype"]
+#     shm_global = data["shm"]
+#     ready_event = data["ready_event"]
+#
+#
+#     try:
+#         shm = shared_memory.SharedMemory(name=shm_global.name)
+#         frame_np = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+#
+#         while True:
+#             ready_event.wait()  # Đợi cho đến khi có frame mới
+#
+#             frame_copy = frame_np.copy()  # Copy ra riêng để tránh xung đột
+#             ready_event.clear()  # Reset cờ
+#
+#             if frame_copy is not None:
+#                 # Encode frame thành JPEG
+#                 ret, buffer = cv2.imencode('.jpg', frame_copy)
+#                 # Gửi dữ liệu binary
+#                 await websocket.send_bytes(buffer.tobytes())
+#
+#             # Tạm dừng để không làm quá tải CPU
+#             await asyncio.sleep(0.01)  # 100 FPS cap (thực tế sẽ thấp hơn do thời gian encode)
+#
+#     except WebSocketDisconnect:
+#         print("⚠️ WebSocket bị ngắt kết nối")
+#     except Exception as e:
+#         print(f"❌ Lỗi WebSocket: {str(e)}")
 
 
 app.include_router(api_router)
