@@ -3,6 +3,12 @@ from typing import Any
 from fastapi import WebSocket
 import cv2
 import asyncio
+
+from app.constants.platform_enum import PlatformEnum
+from app.ultils.camera_ultil import get_rtsp_platform
+from app.ultils.check_platform import get_os_name
+
+
 class ConnectionManager:
     active_connections: dict[str, list[WebSocket]] = {}
 
@@ -41,13 +47,18 @@ class ConnectionManager:
                     print("send_company_message_json", e)
 
     async def stream_camera(self,rtsp):
-        cap = cv2.VideoCapture(rtsp)
+        platform = get_os_name()
+        tsp = get_rtsp_platform(rtsp, platform)
+        cap = cv2.VideoCapture(tsp)
         while rtsp in self.active_connections:
             ret, frame = cap.read()
             if not ret:
                 await self.send_json(rtsp, {"error": "Failed to read frame"})
                 break
             frame = cv2.resize(frame, (640, 480))
+            if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
+                frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             _, buffer = cv2.imencode('.jpg', frame)
             data = buffer.tobytes()
             await self.send_video(rtsp, data)
