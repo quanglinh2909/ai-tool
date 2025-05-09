@@ -180,7 +180,7 @@ class AIPlateService:
                                             if should_send_request:
                                                 print(f"Theo huong, ID: {track_id}")
                                                 try:
-                                                    requests.get(request_url, timeout=1)
+                                                    requests.get(request_url, timeout=5)
                                                 except requests.RequestException as e:
                                                     print(f"[ERROR] Không thể gửi request: {e}")
                                         else:
