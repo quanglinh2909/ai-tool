@@ -24,13 +24,7 @@ class AIPlateService:
         # Khởi động thread giám sát quy trình
         threading.Thread(target=self.check_processes, daemon=True).start()
 
-    def _send_request(self, url):
-        """Gửi HTTP request trong một thread riêng để không chặn xử lý chính"""
-        pass
-        # try:
-        #     requests.get(url, timeout=1)
-        # except requests.RequestException as e:
-        #     print(f"[ERROR] Không thể gửi request: {e}")
+
 
     def worker(self, camera_id, rtsp, shared_array, angle_shared, count_client, shm_name, shape, dtype, ready_event,
                frame_process_mode=1, is_show=True):

@@ -6,6 +6,7 @@ from multiprocessing import shared_memory
 
 import cv2
 import numpy as np
+import requests
 from ultralytics import YOLO
 
 from app.ultils.camera_ultil import get_model_plate_platform
@@ -14,6 +15,13 @@ from app.ultils.drraw_image import draw_identification_area, draw_direction_vect
     draw_info
 from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity
 
+
+def _send_request( url):
+    """Gửi HTTP request trong một thread riêng để không chặn xử lý chính"""
+    try:
+        requests.get(url, timeout=5)
+    except requests.RequestException as e:
+        print(f"[ERROR] Không thể gửi request: {e}")
 
 def ai_processor(frame_queue, stop_event, camera_id, shared_array, angle_shared,
                  count_client, shm_name, shape, dtype, ready_event, frame_process_mode=1, is_show=True):
@@ -208,11 +216,11 @@ def ai_processor(frame_queue, stop_event, camera_id, shared_array, angle_shared,
                                         # Gửi request nếu thỏa điều kiện
                                         if should_send_request:
                                             print(f"Theo huong, ID: {track_id}")
-                                            # threading.Thread(
-                                            #     target=self._send_request,
-                                            #     args=(request_url,),
-                                            #     daemon=True
-                                            # ).start()
+                                            threading.Thread(
+                                                target=_send_request,
+                                                args=(request_url,),
+                                                daemon=True
+                                            ).start()
                                     else:
                                         status = "Khong theo huong"
                                         color = (0, 0, 255)  # Đỏ
