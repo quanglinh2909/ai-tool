@@ -50,6 +50,8 @@ class ConnectionManager:
         platform = get_os_name()
         tsp = get_rtsp_platform(rtsp, platform)
         cap = cv2.VideoCapture(tsp)
+        w = None
+        h = None
         while rtsp in self.active_connections:
             ret, frame = cap.read()
             if not ret:
@@ -59,11 +61,19 @@ class ConnectionManager:
             if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
                 frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if w is None or h is None:
+                w = frame.shape[1]
+                h = frame.shape[0]
+                await self.send_json(rtsp, {
+                    "type": "info",
+                    "width": w,
+                    "height": h
+                })
+
             _, buffer = cv2.imencode('.jpg', frame)
             data = buffer.tobytes()
             await self.send_video(rtsp, data)
             await asyncio.sleep(0.01)  # Giảm tải CPU
-
 
 
         cap.release()
