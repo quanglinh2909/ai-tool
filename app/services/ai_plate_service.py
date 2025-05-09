@@ -1,18 +1,15 @@
 import multiprocessing
-from collections import defaultdict
+import queue
+import threading
+import time
 from multiprocessing import shared_memory
 
-import cv2
-import time
-import threading
 import numpy as np
-import requests
-from ultralytics import YOLO
 
-from app.constants.platform_enum import PlatformEnum
-from app.ultils.camera_ultil import get_rtsp_platform, get_model_plate_platform
+from app.services.process_ai.ai_processor import ai_processor
+from app.services.process_ai.frame_reader import frame_reader
+from app.ultils.camera_ultil import get_rtsp_platform
 from app.ultils.check_platform import get_os_name
-from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity, calculate_arrow_end
 
 
 class AIPlateService:
@@ -22,281 +19,295 @@ class AIPlateService:
         self.shared_boxes = {}
         self.shared_memories = {}
         self.shared_angles = {}
+        self.shared_send_frame = {}
+        self.frame_process_modes = {}  # Lưu chế độ xử lý frame cho mỗi camera
+        # Khởi động thread giám sát quy trình
         threading.Thread(target=self.check_processes, daemon=True).start()
 
-    def worker(self, camera_id, rtsp,shared_array ,angle_shared,shm_name, shape, dtype, ready_event):
-        platform = get_os_name()
-        url_model = get_model_plate_platform(platform)
-        model = YOLO(get_model_plate_platform(url_model),task="detect")
-        id_current = None
-        time_event = time.time()
-        time_wait = None
-        shared_array_current = None
-        existing_shm = shared_memory.SharedMemory(name=shm_name)
-        frame_np = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
-        roi_points = None
-        arrow_start = None
-        arrow_end = None
-        objects_in_roi = {}
-        objects_following_arrow = {}
-        angle_current = 0
-        track_history = defaultdict(lambda: [])
-        arrow_vector = (0, 0)
+    def _send_request(self, url):
+        """Gửi HTTP request trong một thread riêng để không chặn xử lý chính"""
+        pass
+        # try:
+        #     requests.get(url, timeout=1)
+        # except requests.RequestException as e:
+        #     print(f"[ERROR] Không thể gửi request: {e}")
 
-        rtsp = get_rtsp_platform(rtsp,platform)
+    def worker(self, camera_id, rtsp, shared_array, angle_shared, count_client, shm_name, shape, dtype, ready_event,
+               frame_process_mode=1, is_show=True):
+        """
+        Khởi động hai luồng riêng biệt cho việc đọc khung hình và xử lý AI
 
-        while True:
-            print(f"[INFO] Trying to connect to: {rtsp}")
-            cap = cv2.VideoCapture(rtsp)
-            if not cap.isOpened():
-                print("[WARN] Cannot connect. Retrying in 5 seconds...")
-                time.sleep(5)
-                continue
+        Args:
+            camera_id: ID của camera
+            rtsp: URL RTSP của camera
+            shared_array: Array chia sẻ cho các điểm ROI
+            angle_shared: Giá trị chia sẻ cho góc mũi tên
+            count_client: Biến đếm số client đang xem
+            shm_name: Tên shared memory
+            shape: Kích thước của frame
+            dtype: Kiểu dữ liệu của frame
+            ready_event: Event báo hiệu frame đã sẵn sàng
+            frame_process_mode: Chế độ xử lý frame (1 = chỉ frame mới nhất, >1 = số lượng frame, 0 = tất cả)
+            is_show: Hiển thị khung hình hay không
+        """
+        try:
+            # Lấy thông tin nền tảng
+            platform = get_os_name()
 
-            print("[INFO] Connected to camera.")
-            while cap.isOpened():
-                data = np.array(shared_array).reshape(-1, 2)
-                angle = angle_shared.value
-                if shared_array_current is None or  np.array_equal(shared_array_current , data) is False or angle_current != angle:
-                    shared_array_current = data
-                    angle_current = angle
-                    # Chuyển đổi dữ liệu thành mảng numpy
-                    data_box = []
-                    for i in range(len(data)):
-                        x = data[i][0]
-                        y = data[i][1]
-                        if x == -1 and y == -1:
-                            continue
-                        data_box.append({"x": x, "y": y})
-                    # Store the track history
+            # Chuẩn bị URL RTSP
+            rtsp = get_rtsp_platform(rtsp, platform)
 
+            # Tạo queue để chia sẻ khung hình giữa hai luồng
+            # Điều chỉnh kích thước queue dựa trên chế độ xử lý
+            if frame_process_mode <= 0:  # Chế độ xử lý tất cả
+                queue_size = 100  # Kích thước lớn để lưu nhiều frame
+            else:
+                queue_size = max(5, frame_process_mode * 2)  # Đủ lớn cho số lượng frame cần xử lý
 
-                    if len(data_box) >=3   :
-                        roi_points = np.array([[p["x"], p["y"]] for p in data_box], np.int32)
-                        # Định nghĩa mũi tên chỉ hướng (điểm bắt đầu và điểm kết thúc)
-                        arrow_start = np.mean(roi_points, axis=0).astype(int)
-                        arrow_length = 100  # Có thể điều chỉnh độ dài mũi tên
+            frame_queue = queue.Queue(maxsize=queue_size)
 
-                        arrow_end = calculate_arrow_end(arrow_start, angle, arrow_length)
-                        # Tính vector hướng của mũi tên (sẽ dùng để so sánh với hướng di chuyển của đối tượng)
-                        arrow_vector = (arrow_end[0] - arrow_start[0], arrow_end[1] - arrow_start[1])
-                        roi_points = roi_points.reshape((-1, 1, 2))
-                        # Lưu trạng thái của các đối tượng trong ROI
+            # Event để báo hiệu dừng các luồng
+            stop_event = threading.Event()
 
+            # Khởi động luồng đọc khung hình
+            reader_thread = threading.Thread(
+                target=frame_reader,
+                args=(rtsp, frame_queue, stop_event, platform),
+                daemon=True
+            )
+            reader_thread.start()
 
-                ret, frame = cap.read()
-                if not ret:
-                    print("[WARN] Lost frame. Reconnecting...")
-                    break  # Thoát khỏi vòng lặp đọc để reconnect
-                frame = cv2.resize(frame, (640, 480))
-                # Chuyển đổi màu sắc từ BGR sang RGB
-                if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
-                # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGRA)
-                # frame = cv2.resize(frame, (640, 480))
+            # Khởi động luồng xử lý AI
+            processor_thread = threading.Thread(
+                target=ai_processor,
+                args=(frame_queue, stop_event, camera_id, shared_array, angle_shared,
+                      count_client, shm_name, shape, dtype, ready_event, frame_process_mode, is_show),
+                daemon=True
+            )
+            processor_thread.start()
 
+            # Đợi các luồng kết thúc
+            while not stop_event.is_set():
+                time.sleep(0.1)
 
-                # Tạo bản sao của frame để tránh vẽ đè lên
-                display_frame = frame.copy()
-                if roi_points is not None:
-                    # Vẽ vùng ROI
-                    cv2.polylines(display_frame, [roi_points], isClosed=True, color=(0, 255, 0), thickness=2)
-                if arrow_start is not None and arrow_end is not None:
-                    # Vẽ mũi tên chỉ hướng
-                    cv2.arrowedLine(display_frame, arrow_start, arrow_end, (0, 0, 255), 3, tipLength=0.3)
-                # Run YOLO tracking on the frame, persisting tracks between frames
-                result = model.track(frame, persist=True, verbose=False)[0]
+                # Kiểm tra xem các luồng còn hoạt động không
+                if not reader_thread.is_alive() or not processor_thread.is_alive():
+                    print(f"[WARN] Một trong các luồng đã dừng. Thoát worker.")
+                    stop_event.set()
 
-                if result.boxes and result.boxes.id is not None:
-                    boxes = result.boxes.xywh.cpu()
-                    track_ids = result.boxes.id.int().cpu().tolist()
-                    class_ids = result.boxes.cls.cpu().tolist()
+            # Dọn dẹp
+            if reader_thread.is_alive():
+                reader_thread.join(timeout=2)
+            if processor_thread.is_alive():
+                processor_thread.join(timeout=2)
 
-                    # Kiểm tra từng đối tượng
-                    for box, track_id, class_id in zip(boxes, track_ids, class_ids):
-                        x, y, w, h = box
-                        if int(class_id) != 5:
-                            continue
-                        center_point = (float(x), float(y))
+        except Exception as e:
+            print(f"[ERROR] Lỗi trong worker: {e}")
 
-                        # Lưu vết
-                        track = track_history[track_id]
-                        track.append(center_point)
-                        if len(track) > 30:  # retain 30 tracks for 30 frames
-                            track.pop(0)
+    def add_camera(self, camera_id, rtsp, points, angle, frame_process_mode=50):
+        """
+        Thêm camera mới để theo dõi
 
-                        # Vẽ đường di chuyển
-                        if len(track) > 1:
-                            points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
-                            cv2.polylines(display_frame, [points], isClosed=False, color=(230, 230, 230), thickness=2)
-                            cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=2)
-
-                        # Vẽ box cho đối tượng
-                        x1, y1 = int(x - w / 2), int(y - h / 2)
-                        x2, y2 = int(x + w / 2), int(y + h / 2)
-                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-
-                        in_roi = False
-                        if roi_points is not None:
-                            # Kiểm tra xem đối tượng có nằm trong ROI không
-                            in_roi = point_in_polygon(center_point, roi_points)
-
-                        # Nếu đối tượng trong ROI, kiểm tra hướng di chuyển
-                        if in_roi:
-                            objects_in_roi[track_id] = True
-
-                            # Xác định vector di chuyển của đối tượng
-                            if len(track) > 1:
-                                movement_vector = get_direction_vector(track)
-                                # Tính độ tương đồng giữa hướng di chuyển và hướng mũi tên
-                                similarity = direction_similarity(movement_vector, arrow_vector)
-
-                                # Nếu đối tượng di chuyển theo hướng gần với mũi tên (cosine > 0.7 ~ 45 độ)
-                                following_arrow = similarity > 0.7
-
-                                # Lưu trạng thái và hiển thị
-                                objects_following_arrow[track_id] = following_arrow
-
-                                # Hiển thị thông tin trên frame
-                                if following_arrow:
-                                    status = "Theo huong "
-                                    color = (0, 255, 0)  # Xanh lá
-                                    if id_current != track_id or (
-                                            time_wait is not None and time.time() - time_event > time_wait  ):
-                                        id_current = track_id
-                                        time_event = time.time()
-                                        print("Theo huong", track_id)
-                                        requests.get("http://192.168.103.97:8090/3")
-                                else:
-                                    status = "Khong theo huong"
-                                    color = (0, 0, 255)  # Đỏ
-
-                                label = f"ID: {track_id}, {status}"
-                                cv2.putText(display_frame, label, (int(x), int(y) - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-                                # Vẽ vector hướng di chuyển của đối tượng (thu nhỏ để dễ nhìn)
-                                movement_scale = 30
-                                movement_end = (int(x + movement_vector[0] / movement_scale),
-                                                int(y + movement_vector[1] / movement_scale))
-                                cv2.arrowedLine(display_frame, (int(x), int(y)), movement_end, color, 2)
-
-                        elif track_id in objects_in_roi:
-                            # Đối tượng đã rời khỏi ROI
-                            print("Đối tượng đã rời khỏi ROI", track_id)
-                            del objects_in_roi[track_id]
-                            if track_id in objects_following_arrow:
-                                del objects_following_arrow[track_id]
-
-                            if track_id == id_current:
-                                id_current = None
-
-                if roi_points is not None:
-                # Hiển thị thông tin tổng hợp
-                    following_count = sum(1 for value in objects_following_arrow.values() if value)
-                    cv2.putText(display_frame, f"Trong vùng: {len(objects_in_roi)}", (20, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.putText(frame, f"Trong vùng: {len(objects_in_roi)}", (20, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-                if arrow_start is not None and arrow_end is not None:
-                    cv2.putText(display_frame, f"Theo huong mui ten: {following_count}", (20, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-                    cv2.putText(frame, f"Theo huong mui ten: {following_count}", (20, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-
-                # Display the annotated frame - chỉ gọi imshow một lần mỗi vòng lặp
-                # frame = cv2.resize(frame, (640, 480))
-                # np.copyto(frame_np, frame)
-                # # # Đánh dấu là đã sẵn sàng
-                # ready_event.set()
-
-                cv2.imshow(f'Camera: {camera_id}', display_frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("[INFO] Quit signal received. Closing stream.")
-                    cap.release()
-                    cv2.destroyAllWindows()
-                    return
-
-            cap.release()
-            cv2.destroyAllWindows()
-            print("[INFO] Reconnecting in 5 seconds...")
-            time.sleep(5)
-
-    def add_camera(self, camera_id, rtsp,points):
+        Args:
+            camera_id: ID của camera
+            rtsp: URL RTSP của camera
+            points: Danh sách các điểm định nghĩa ROI
+            angle: Góc của mũi tên chỉ hướng
+            frame_process_mode: Chế độ xử lý frame (1 = chỉ frame mới nhất, >1 = số lượng frame, 0 = tất cả)
+        """
         if camera_id in self.processes:
-            print(f"Camera {camera_id} already running.")
-            return
+            print(f"Camera {camera_id} đã đang chạy.")
+            return False
 
+        try:
+            # Chuyển đổi dữ liệu thành mảng numpy
+            shared_data = np.array([[p["x"], p["y"]] for p in points], dtype=np.float64)
+            shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
 
-        # Chuyển đổi dữ liệu thành mảng numpy
-        shared_data = np.array([[p["x"], p["y"]] for p in points], dtype=np.float64)
-        shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
-        shape = (480,640, 3)  # height, width, channels
-        dtype = np.uint8
-        size = np.prod(shape)  # 640 * 480 * 3 = 921600
-        shm_global = shared_memory.SharedMemory(create=True, size=size)
-        ready_event = multiprocessing.Event()
-        # Tạo Array chia sẻ
+            # Cấu hình shared memory cho frame
+            shape = (480, 640, 3)  # height, width, channels
+            dtype = np.uint8
+            size = int(np.prod(shape))  # 640 * 480 * 3 = 921600
 
-        angle = multiprocessing.Value('i', 0)
+            try:
+                shm_global = shared_memory.SharedMemory(create=True, size=size)
+                ready_event = multiprocessing.Event()
 
+                # Tạo biến chia sẻ cho góc và số client
+                angle_shared = multiprocessing.Value('i', angle)
+                count_client = multiprocessing.Value('i', 0)
 
-        process = multiprocessing.Process(target=self.worker, args=(camera_id, rtsp,shared_array,angle,shm_global.name, shape, dtype, ready_event), daemon=True)
-        process.start()
+                # Lưu chế độ xử lý frame
+                self.frame_process_modes[camera_id] = frame_process_mode
 
+                # Khởi động worker process
+                process = multiprocessing.Process(
+                    target=self.worker,
+                    args=(camera_id, rtsp, shared_array, angle_shared, count_client,
+                          shm_global.name, shape, dtype, ready_event, frame_process_mode),
+                    daemon=True
+                )
+                process.start()
 
-        self.processes[camera_id] = process
-        self.rtsps[camera_id] = rtsp
-        self.shared_boxes[camera_id] = shared_array
-        self.shared_memories[camera_id] = {"shm": shm_global, "shape": shape, "dtype": dtype,"ready_event":ready_event}
-        self.shared_angles[camera_id] = angle
-        print(f"add_camera {camera_id}")
+                # Lưu thông tin vào các dictionary
+                self.processes[camera_id] = process
+                self.rtsps[camera_id] = rtsp
+                self.shared_boxes[camera_id] = shared_array
+                self.shared_memories[camera_id] = {
+                    "shm": shm_global,
+                    "shape": shape,
+                    "dtype": dtype,
+                    "ready_event": ready_event
+                }
+                self.shared_angles[camera_id] = angle_shared
+                self.shared_send_frame[camera_id] = count_client
+
+                print(f"Đã thêm camera {camera_id} thành công với chế độ xử lý frame: {frame_process_mode}")
+                return True
+
+            except Exception as e:
+                print(f"[ERROR] Không thể tạo shared memory: {e}")
+                return False
+
+        except Exception as e:
+            print(f"[ERROR] Không thể thêm camera {camera_id}: {e}")
+            return False
 
     def remove_camera(self, id_camera):
-        if id_camera in self.processes:
-            self.processes[id_camera].terminate()
-            self.processes[id_camera].join()
-            del self.processes[id_camera]
-            print(f"Camera {id_camera} stopped.")
+        """
+        Gỡ bỏ và dừng xử lý camera
 
+        Args:
+            id_camera: ID của camera cần gỡ bỏ
+        """
+        if id_camera in self.processes:
+            # Dừng và dọn dẹp process
+            try:
+                self.processes[id_camera].terminate()
+                self.processes[id_camera].join(timeout=3)
+                if self.processes[id_camera].is_alive():
+                    self.processes[id_camera].kill()  # Buộc dừng nếu không thể terminate
+                del self.processes[id_camera]
+                print(f"Đã dừng camera {id_camera}.")
+            except Exception as e:
+                print(f"[ERROR] Lỗi khi dừng process cho camera {id_camera}: {e}")
+
+        # Dọn dẹp shared memory
+        if id_camera in self.shared_memories:
+            try:
+                memory_info = self.shared_memories[id_camera]
+                memory_info["shm"].close()
+                memory_info["shm"].unlink()
+                del self.shared_memories[id_camera]
+            except Exception as e:
+                print(f"[ERROR] Lỗi khi giải phóng shared memory cho camera {id_camera}: {e}")
+
+        # Dọn dẹp các dữ liệu khác
         if id_camera in self.rtsps:
             del self.rtsps[id_camera]
-            print(f"Camera {id_camera} removed from list.")
 
-    def update_shared_array(self, camera_id, new_data,angle):
-        shared_array = self.shared_boxes[camera_id]
-        # Update the shared data array
-        updated_data = np.array([[p["x"], p["y"]] for p in new_data], dtype=np.float64)
-        target_np = np.frombuffer(shared_array.get_obj(), dtype=np.float64).reshape(-1, 2)
-        for i in range(len(updated_data)):
-            target_np[i] = updated_data[i]
+        if id_camera in self.shared_boxes:
+            del self.shared_boxes[id_camera]
 
+        if id_camera in self.shared_angles:
+            del self.shared_angles[id_camera]
 
+        if id_camera in self.shared_send_frame:
+            del self.shared_send_frame[id_camera]
 
-        shared_angle = self.shared_angles[camera_id]
-        shared_angle.value = angle
+        if id_camera in self.frame_process_modes:
+            del self.frame_process_modes[id_camera]
 
+        print(f"Đã xóa camera {id_camera} khỏi danh sách.")
+        return True
+
+    def update_shared_array(self, camera_id, new_data, angle):
+        """
+        Cập nhật dữ liệu ROI và góc cho camera
+
+        Args:
+            camera_id: ID của camera cần cập nhật
+            new_data: Dữ liệu ROI mới
+            angle: Góc mũi tên mới
+        """
+        if camera_id not in self.shared_boxes:
+            print(f"[ERROR] Camera {camera_id} không tồn tại trong hệ thống")
+            return False
+
+        try:
+            shared_array = self.shared_boxes[camera_id]
+            # Cập nhật mảng dữ liệu chia sẻ
+            updated_data = np.array([[p["x"], p["y"]] for p in new_data], dtype=np.float64)
+            target_np = np.frombuffer(shared_array.get_obj(), dtype=np.float64).reshape(-1, 2)
+
+            # Đảm bảo kích thước mảng phù hợp
+            if len(updated_data) > len(target_np):
+                print(f"[WARN] Dữ liệu mới có nhiều điểm hơn ({len(updated_data)} > {len(target_np)})")
+                updated_data = updated_data[:len(target_np)]
+
+            for i in range(len(updated_data)):
+                target_np[i] = updated_data[i]
+
+            # Cập nhật góc
+            shared_angle = self.shared_angles[camera_id]
+            shared_angle.value = angle
+
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Không thể cập nhật dữ liệu cho camera {camera_id}: {e}")
+            return False
+
+    def update_client_count(self, camera_id, count):
+        """
+        Cập nhật số lượng client đang xem camera
+
+        Args:
+            camera_id: ID của camera
+            count: Số lượng client
+        """
+        if camera_id in self.shared_send_frame:
+            try:
+                self.shared_send_frame[camera_id].value = count
+                return True
+            except Exception as e:
+                print(f"[ERROR] Không thể cập nhật số lượng client: {e}")
+        return False
 
     def check_processes(self):
+        """Thread kiểm tra và khởi động lại các process đã bị dừng"""
         while True:
-            for cam_id, p in list(self.processes.items()):
-                if not p.is_alive():
-                    print("Worker process died. Restarting...")
-                    rtsp = self.rtsps[cam_id]
-                    self.remove_camera(cam_id)
-                    time.sleep(1)
-                    self.add_camera(cam_id, rtsp)
-            time.sleep(2)
+            try:
+                for cam_id, p in list(self.processes.items()):
+                    if not p.is_alive():
+                        print(f"[WARN] Process cho camera {cam_id} đã dừng. Đang khởi động lại...")
+                        if cam_id in self.rtsps:
+                            rtsp = self.rtsps[cam_id]
+                            # Lấy các thông số hiện tại
+                            if cam_id in self.shared_boxes:
+                                data = np.array(self.shared_boxes[cam_id]).reshape(-1, 2)
+                                points = [{"x": float(p[0]), "y": float(p[1])} for p in data]
+                            else:
+                                points = []
 
+                            angle = self.shared_angles[cam_id].value if cam_id in self.shared_angles else 0
+
+                            # Xóa camera cũ và khởi động lại
+                            self.remove_camera(cam_id)
+                            time.sleep(1)
+                            self.add_camera(cam_id, rtsp, points, angle)
+                        else:
+                            print(f"[ERROR] Không thể khởi động lại camera {cam_id}: không tìm thấy URL RTSP")
+
+            except Exception as e:
+                print(f"[ERROR] Lỗi trong thread kiểm tra: {e}")
+
+            time.sleep(5)  # Kiểm tra mỗi 5 giây
+
+    def get_cameras(self):
+        """Trả về danh sách camera đang hoạt động"""
+        return list(self.processes.keys())
+
+
+# Tạo instance mặc định
 ai_plate_service = AIPlateService()
-# if __name__ == '__main__':
-#
-#     # ai_plate_service.add_camera(1, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
-#     ai_plate_service.add_camera(1, "/home/linh/Documents/ai-tool/test/output_vao.avi")
-#     # ai_plate_service.add_camera(2, "rtsp://admin:Oryza123@192.168.104.2:554/cam/realmonitor?channel=1&subtype=0")
-#
-#     ai_plate_service.check_processes()

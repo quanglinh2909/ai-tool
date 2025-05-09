@@ -47,7 +47,7 @@ class ConnectionManager:
             if not ret:
                 await self.send_json(rtsp, {"error": "Failed to read frame"})
                 break
-            frame = cv2.resize(frame, (640, 320))
+            frame = cv2.resize(frame, (640, 480))
             _, buffer = cv2.imencode('.jpg', frame)
             data = buffer.tobytes()
             await self.send_video(rtsp, data)

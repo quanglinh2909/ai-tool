@@ -18,6 +18,7 @@ class ProcessAiService:
         for process_ai in process_aies:
            type_ai = process_ai.get('type_ai')
            points = process_ai.get('points')
+           direction = process_ai.get('direction')
            if type_ai == TypeAIEnum.PLATE.value:
                 rtsp = process_ai.get('camera_id.rtsp')
                 id = process_ai.get('camera_id.id')
@@ -26,7 +27,7 @@ class ProcessAiService:
                 rtsp = get_rtsp_encode(rtsp, username, password)
                 print("points",type(points))
                 points = json.loads(points)
-                ai_plate_service.add_camera(id, rtsp,points)
+                ai_plate_service.add_camera(id, rtsp,points,int(direction))
 
 
 process_ai_service = ProcessAiService()

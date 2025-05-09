@@ -30,7 +30,7 @@ class CameraService:
             )
             await process_ai.save()
             rtsp =get_rtsp_encode(req.rtsp, req.username, req.password)
-            ai_plate_service.add_camera(id,rtsp,req.setting.points_plate)
+            ai_plate_service.add_camera(id,rtsp,req.setting.points_plate,int(setting.direction_angle_plate))
 
         return camera
 
