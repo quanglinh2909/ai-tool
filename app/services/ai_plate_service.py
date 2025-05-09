@@ -118,8 +118,8 @@ class AIPlateService:
                                 current_objects.add(track_id)
 
                                 # Lọc theo class_id nếu cần
-                                # if int(class_id) != 5:  # Nếu muốn chỉ theo dõi một loại đối tượng cụ thể
-                                #     continue
+                                if int(class_id) != 5:  # Nếu muốn chỉ theo dõi một loại đối tượng cụ thể
+                                    continue
 
                                 center_point = (float(x), float(y))
 
