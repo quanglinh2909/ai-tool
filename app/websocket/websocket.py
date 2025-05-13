@@ -1,4 +1,5 @@
 import asyncio
+import time
 from uuid import UUID
 
 import cv2
@@ -45,7 +46,11 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: str):
         # set count_client
         count_client.value += 1
 
+        target_fps = 15
 
+        # Biến theo dõi thời gian cho việc giới hạn FPS
+        last_frame_time = 0
+        frame_delay = 1.0 / target_fps  # Tính toán thời gian trễ giữa các frame
         while True:
             # print("🔌 Đang chờ frame mới từ camera...")
             ready_event.wait()  # Đợi cho đến khi có frame mới
@@ -53,6 +58,13 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: str):
 
             frame_copy = frame_np.copy()  # Copy ra riêng để tránh xung đột
             ready_event.clear()  # Reset cờ
+            current_time = time.time()
+            time_elapsed = current_time - last_frame_time
+
+            # Nếu chưa đến thời gian cần lấy frame tiếp theo, sleep đi một chút
+            if time_elapsed < frame_delay:
+                await asyncio.sleep(frame_delay - time_elapsed)
+                continue
 
             if frame_copy is not None:
                 # Encode frame thành JPEG

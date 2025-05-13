@@ -20,7 +20,8 @@ from app.ultils.drraw_image import draw_identification_area, draw_direction_vect
 from app.ultils.post_process import setup_model, post_process
 from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity, calculate_arrow_end
 
-
+import os
+os.environ['RKNN_LOG_LEVEL'] = '0'
 class AIPlateService:
     def __init__(self):
         self.processes = {}
