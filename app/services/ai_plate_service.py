@@ -139,7 +139,7 @@ class AIPlateService:
                 # Cập nhật FPS sau mỗi giây
                 if elapsed_time > 1:
                     fps = frame_count / elapsed_time
-                    # print('{} - FPS: {:.2f} (target: {})'.format(camera_id, fps, target_fps))
+                    print('{} - FPS: {:.2f} (target: {})'.format(camera_id, fps, target_fps))
                     frame_count = 0
                     start_time = time.time()
 
@@ -151,7 +151,7 @@ class AIPlateService:
                 #     break
 
                 if client_count > 0:
-                    frame = cv2.resize(frame, (640, 480))
+                    frame = cv2.resize(frame, (320, 320))
                     np.copyto(frame_np, frame)
                     # Đánh dấu là đã sẵn sàng
                     ready_event.set()
@@ -202,7 +202,7 @@ class AIPlateService:
 
             # Cấu hình shared memory cho frame
             # shape = (height, width, 3)  # height, width, channels
-            shape = (480                                                                                        , 640, 3)  # height, width, channels
+            shape = (320,320, 3)  # height, width, channels
             dtype = np.uint8
             size = int(np.prod(shape))  # 640 * 480 * 3 = 921600
 
