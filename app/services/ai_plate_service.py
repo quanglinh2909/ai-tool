@@ -1,4 +1,5 @@
 import multiprocessing
+import queue
 from collections import defaultdict
 from multiprocessing import shared_memory
 
@@ -8,12 +9,15 @@ import threading
 import numpy as np
 import requests
 from ultralytics import YOLO
-
+import av
 from app.constants.platform_enum import PlatformEnum
-from app.ultils.camera_ultil import get_rtsp_platform, get_model_plate_platform
+from app.ultils.camera_ultil import get_rtsp_platform, get_model_plate_platform, decode_frames
+from app.ultils.centroid_tracker import CentroidTracker, draw_tracks
 from app.ultils.check_platform import get_os_name
+from app.ultils.coco_utils import COCO_test_helper
 from app.ultils.drraw_image import draw_identification_area, draw_direction_vector, draw_moving_path, draw_box, \
     draw_info
+from app.ultils.post_process import setup_model, post_process
 from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity, calculate_arrow_end
 
 
@@ -26,235 +30,142 @@ class AIPlateService:
         self.shared_angles = {}
         self.shared_send_frame = {}
         # Khởi động thread giám sát quy trình
-        threading.Thread(target=self.check_processes, daemon=True).start()
+        # threading.Thread(target=self.check_processes, daemon=True).start()
+
+
 
     def worker(self, camera_id, rtsp, shared_array, angle_shared, count_client, shm_name, shape, dtype, ready_event,
                is_show=True):
-        try:
-            platform = get_os_name()
-            url_model = get_model_plate_platform(platform)
-            model = YOLO(url_model, task="detect")
+        CLASSES = ("person", "bicycle", "car", "motorbike ", "aeroplane ", "bus ", "train", "truck ", "boat",
+                   "traffic light",
+                   "fire hydrant", "stop sign ", "parking meter", "bench", "bird", "cat", "dog ", "horse ", "sheep",
+                   "cow",
+                   "elephant",
+                   "bear", "zebra ", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
+                   "snowboard", "sports ball", "kite",
+                   "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass",
+                   "cup",
+                   "fork", "knife ",
+                   "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza ",
+                   "donut",
+                   "cake", "chair", "sofa",
+                   "pottedplant", "bed", "diningtable", "toilet ", "tvmonitor", "laptop	", "mouse	", "remote ",
+                   "keyboard ", "cell phone", "microwave ",
+                   "oven ", "toaster", "sink", "refrigerator ", "book", "clock", "vase", "scissors ", "teddy bear ",
+                   "hair drier", "toothbrush ")
+        IMG_SIZE = (640, 640)
+        tracker = CentroidTracker(max_disappeared=20, max_distance=50)
+        co_helper = COCO_test_helper(enable_letter_box=True)
+        platform = get_os_name()
+        args = get_model_plate_platform(platform)
+        print("args",args)
+        model, _platform = setup_model(args)
 
-            """
-                 - nếu time_wait = None thì cho phép gửi yêu cầu đúng 1 lần
-                 - nếu time_wait != None thì cho phép gửi yêu cầu nhiều lần nếu thời gian chênh lệch >= time_wait
-            """
-            time_wait = None  # Có thể điều chỉnh nếu cần thiết cho phép gửi request nhiều lần
-            request_url = "http://192.168.103.97:8090/3"  # URL cho requests - đặt ở biến để dễ thay đổi
 
-            # Theo dõi thời gian gửi request cho mỗi đối tượng
-            object_timers = {}  # {track_id: last_event_time}
+        max_size_queue = 1
+        # Thiết lập threading
+        frame_queue = queue.Queue(maxsize=max_size_queue)
+        stop_event = threading.Event()
 
+        existing_shm = shared_memory.SharedMemory(name=shm_name)
+        frame_np = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
+
+        # Thread giải mã frame
+        decode_thread = threading.Thread(
+            target=decode_frames,
+            args=(rtsp, frame_queue, stop_event, max_size_queue),
+        )
+        decode_thread.daemon = True
+        decode_thread.start()
+
+        # try:
+        frame_count = 0
+        start_time = time.time()
+        fps = 0
+        target_fps = 15
+
+        # Biến theo dõi thời gian cho việc giới hạn FPS
+        last_frame_time = 0
+        frame_delay = 1.0 / target_fps  # Tính toán thời gian trễ giữa các frame
+
+        while not stop_event.is_set():
             try:
-                existing_shm = shared_memory.SharedMemory(name=shm_name)
-                frame_np = np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf)
-            except Exception as e:
-                print(f"[ERROR] Shared memory error: {e}")
-                return
+                client_count = count_client.value
 
-            objects_in_roi = {}  # Các đối tượng đang ở trong vùng ROI
-            objects_following_arrow = {}  # Các đối tượng đang di chuyển theo mũi tên
-            track_history = defaultdict(list)  # Lịch sử di chuyển của các đối tượng
+                # Tính thời gian cần thiết để đạt được FPS mục tiêu
+                current_time = time.time()
+                time_elapsed = current_time - last_frame_time
 
-            # Chuẩn bị URL RTSP
-            rtsp = get_rtsp_platform(rtsp, platform)
-
-            reconnect_delay = 5  # Số giây chờ trước khi kết nối lại
-            max_track_history = 30  # Số lượng tối đa các điểm lịch sử theo dõi
-            arrow_similarity_threshold = 0.7  # Ngưỡng tương đồng hướng di chuyển (0.7 ~ 45 độ)
-
-            while True:
-                print(f"[INFO] Đang kết nối tới: {rtsp}")
-                cap = cv2.VideoCapture(rtsp)
-                if not cap.isOpened():
-                    print(f"[WARN] Không thể kết nối. Thử lại sau {reconnect_delay} giây...")
-                    time.sleep(reconnect_delay)
+                # Nếu chưa đến thời gian cần lấy frame tiếp theo, sleep đi một chút
+                if time_elapsed < frame_delay:
+                    time.sleep(frame_delay - time_elapsed)
                     continue
 
-                print("[INFO] Đã kết nối với camera.")
-                frame_count = 0
+                # Ghi lại thời điểm lấy frame
+                last_frame_time = time.time()
 
-                while cap.isOpened():
-                    try:
-                        ret, frame = cap.read()
-                        if not ret:
-                            print("[WARN] Mất frame. Đang kết nối lại...")
-                            break  # Thoát khỏi vòng lặp đọc để reconnect
+                # Lấy frame từ queue với timeout
+                frame = frame_queue.get(timeout=1.0)
+                frame = frame.reformat( format="bgr24")
+                frame = frame.to_ndarray()
 
-                        frame_count += 1
-                        frame = cv2.resize(frame, (640, 480))
+                img = co_helper.letter_box(im=frame.copy(), new_shape=(IMG_SIZE[1], IMG_SIZE[0]),
+                                           pad_color=(0, 0, 0))
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                if  platform != PlatformEnum.ORANGE_PI_MAX and platform != PlatformEnum.ORANGE_PI:
+                    img = np.transpose(img, (2, 0, 1))  # (3, 640, 640)
+                    img = img.astype(np.float32)
+                img = np.expand_dims(img, axis=0)
 
-                        # Chuyển đổi màu sắc từ BGR sang RGB nếu cần
-                        if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
-                            frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
+                outputs = model.run([img])
+                boxes, classes, scores = post_process(outputs)
 
-                        display_frame = frame.copy()
+                if boxes is not None and len(boxes) > 0:
+                    # Chuyển đổi boxes về tọa độ thực
+                    real_boxes = co_helper.get_real_box(boxes)
 
-                        # Đọc dữ liệu từ shared memory
-                        data = np.array(shared_array).reshape(-1, 2)
-                        angle = angle_shared.value
-                        client_count = count_client.value
+                    # Cập nhật tracker
+                    tracks = tracker.update(real_boxes, scores, classes)
+                    # Vẽ các track lên frame
+                    frame = draw_tracks(frame, tracks, CLASSES)
 
-                        # Vẽ vùng nhận diện
-                        roi_points_drawn, roi_points = draw_identification_area(data, display_frame, is_draw=True)
+                # frame = cv2.resize(frame, (640, 480))
 
-                        # Vẽ mũi tên chỉ hướng
-                        arrow_vector = draw_direction_vector(roi_points_drawn, display_frame, angle, is_draw=True)
+                # Tính FPS thực tế để hiển thị
+                frame_count += 1
+                elapsed_time = time.time() - start_time
 
-                        # Nhận diện và theo dõi đối tượng
-                        result = model.track(frame, persist=True, verbose=False)[0]
+                # Cập nhật FPS sau mỗi giây
+                if elapsed_time > 1:
+                    fps = frame_count / elapsed_time
+                    # print('{} - FPS: {:.2f} (target: {})'.format(camera_id, fps, target_fps))
+                    frame_count = 0
+                    start_time = time.time()
 
-                        # Xử lý kết quả nhận diện nếu có
-                        current_objects = set()
+                cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                        if result.boxes and result.boxes.id is not None:
-                            boxes = result.boxes.xywh.cpu()
-                            track_ids = result.boxes.id.int().cpu().tolist()
-                            class_ids = result.boxes.cls.cpu().tolist()
+                # cv2.imshow(f'Camera: {camera_id}', frame)
+                # if cv2.waitKey(1) & 0xFF == ord('q'):
+                #     break
 
-                            # Kiểm tra từng đối tượng
-                            for box, track_id, class_id in zip(boxes, track_ids, class_ids):
-                                x, y, w, h = box
-                                current_objects.add(track_id)
+                if client_count > 0:
+                    frame = cv2.resize(frame, (640, 480))
+                    np.copyto(frame_np, frame)
+                    # Đánh dấu là đã sẵn sàng
+                    ready_event.set()
 
-                                # Lọc theo class_id nếu cần
-                                if int(class_id) != 5:  # Nếu muốn chỉ theo dõi một loại đối tượng cụ thể
-                                    continue
+                time.sleep(0.001)
+            except queue.Empty:
+                continue
 
-                                center_point = (float(x), float(y))
-
-                                # Lưu vết di chuyển
-                                track = track_history[track_id]
-                                track.append(center_point)
-                                if len(track) > max_track_history:
-                                    track.pop(0)
-
-                                # Vẽ đường di chuyển
-                                draw_moving_path(frame, display_frame, track, is_draw_display=True, is_draw_frame=True)
-
-                                # Vẽ box cho đối tượng
-                                draw_box(frame, display_frame, x, y, w, h, is_draw_display=True, is_draw_frame=True)
-
-                                in_roi = False
-                                if roi_points is not None:
-                                    # Kiểm tra xem đối tượng có nằm trong ROI không
-                                    in_roi = point_in_polygon(center_point, roi_points)
-
-                                # Nếu đối tượng nằm trong ROI
-                                if in_roi:
-                                    objects_in_roi[track_id] = True
-
-                                    # Xác định vector di chuyển khi có ít nhất 2 điểm
-                                    if len(track) > 1:
-                                        movement_vector = get_direction_vector(track)
-                                        # Tính độ tương đồng giữa hướng di chuyển và hướng mũi tên
-                                        similarity = direction_similarity(movement_vector, arrow_vector)
-
-                                        # Kiểm tra đối tượng có di chuyển theo hướng mũi tên không
-                                        following_arrow = similarity > arrow_similarity_threshold
-
-                                        # Lưu trạng thái
-                                        objects_following_arrow[track_id] = following_arrow
-
-                                        # Xử lý trạng thái và hiển thị
-                                        current_time = time.time()
-
-                                        if following_arrow:
-                                            status = "Theo huong"
-                                            color = (0, 255, 0)  # Xanh lá
-
-                                            # Logic gửi request cho từng đối tượng
-                                            should_send_request = False
-
-                                            # Trường hợp 1: Chưa từng gửi request cho object này
-                                            if track_id not in object_timers:
-                                                should_send_request = True
-                                                object_timers[track_id] = current_time
-                                            # Trường hợp 2: Đã gửi request trước đó và đủ thời gian chờ
-                                            elif time_wait is not None and (
-                                                    current_time - object_timers[track_id] > time_wait):
-                                                should_send_request = True
-                                                object_timers[track_id] = current_time
-
-                                            # Gửi request nếu thỏa điều kiện
-                                            if should_send_request:
-                                                print(f"Theo huong, ID: {track_id}")
-                                                try:
-                                                    requests.get(request_url, timeout=5)
-                                                except requests.RequestException as e:
-                                                    print(f"[ERROR] Không thể gửi request: {e}")
-                                        else:
-                                            status = "Khong theo huong"
-                                            color = (0, 0, 255)  # Đỏ
-
-                                        # Hiển thị nhãn
-                                        label = f"ID: {track_id}, {status}"
-                                        cv2.putText(display_frame, label, (int(x), int(y) - 10),
-                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-                                elif track_id in objects_in_roi:
-                                    # Đối tượng đã rời khỏi ROI
-                                    print(f"Đối tượng đã rời khỏi ROI: {track_id}")
-                                    del objects_in_roi[track_id]
-                                    if track_id in objects_following_arrow:
-                                        del objects_following_arrow[track_id]
-
-                                    # Xóa timer khi đối tượng rời khỏi ROI
-                                    if track_id in object_timers:
-                                        del object_timers[track_id]
-
-                            # Dọn dẹp các đối tượng không còn được theo dõi
-                            ids_to_remove = [tid for tid in object_timers if tid not in current_objects]
-                            for tid in ids_to_remove:
-                                del object_timers[tid]
-
-                        # Hiển thị thông tin tổng hợp
-                        draw_info(frame, display_frame, objects_following_arrow, objects_in_roi, is_draw_display=True,
-                                  is_draw_frame=True)
-
-                        # Cập nhật frame vào shared memory nếu có client đang xem
-                        if client_count > 0:
-                            frame = cv2.resize(frame, (640, 480))
-                            np.copyto(frame_np, frame)
-                            # Đánh dấu là đã sẵn sàng
-                            ready_event.set()
-
-                        # Hiển thị frame nếu cần
-                        if is_show:
-                            cv2.imshow(f'Camera: {camera_id}', display_frame)
-                            if cv2.waitKey(1) & 0xFF == ord('q'):
-                                print("[INFO] Nhận tín hiệu thoát. Đóng stream.")
-                                cap.release()
-                                cv2.destroyAllWindows()
-                                return
-                        else:
-                            # Nếu không cần hiển thị, chỉ đợi một khoảng thời gian ngắn
-                            time.sleep(0.01)
-
-                    except Exception as e:
-                        print(f"[ERROR] Lỗi trong vòng lặp xử lý: {e}")
-                        time.sleep(0.1)  # Ngăn ngừa vòng lặp vô hạn khi có lỗi
-
-                # Dọn dẹp tài nguyên khi kết thúc vòng lặp
-                cap.release()
-                if is_show:
-                    cv2.destroyAllWindows()
-                print(f"[INFO] Kết nối lại sau {reconnect_delay} giây...")
-                time.sleep(reconnect_delay)
-
-        except Exception as e:
-            print(f"[ERROR] Lỗi trong worker: {e}")
-        finally:
-            # Đảm bảo giải phóng tài nguyên khi worker kết thúc
-            try:
-                if 'existing_shm' in locals():
-                    existing_shm.close()
-                if 'cap' in locals() and cap is not None:
-                    cap.release()
-                if is_show and 'cv2' in locals():
-                    cv2.destroyAllWindows()
-            except Exception as cleanup_error:
-                print(f"[ERROR] Lỗi khi dọn dẹp: {cleanup_error}")
+        # except Exception as e:
+        #     print(f"Lỗi: {e}")
+        # finally:
+        #     stop_event.set()
+        #     if decode_thread.is_alive():
+        #         decode_thread.join(timeout=1.0)
+        #     container.close()
 
     def add_camera(self, camera_id, rtsp, points, angle):
         """
@@ -275,8 +186,22 @@ class AIPlateService:
             shared_data = np.array([[p["x"], p["y"]] for p in points], dtype=np.float64)
             shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
 
+            # cap = cv2.VideoCapture(rtsp)
+            # if not cap.isOpened():
+            #     print(f"[ERROR] Không thể mở camera {camera_id} với URL {rtsp}")
+            #     return False
+            # # Lấy kích thước của frame
+            # ret, frame = cap.read()
+            # if not ret:
+            #     print(f"[ERROR] Không thể đọc frame từ camera {camera_id}")
+            #     return False
+            # height, width, _ = frame.shape
+            # cap.release()
+
+
             # Cấu hình shared memory cho frame
-            shape = (480, 640, 3)  # height, width, channels
+            # shape = (height, width, 3)  # height, width, channels
+            shape = (480                                                                                        , 640, 3)  # height, width, channels
             dtype = np.uint8
             size = int(np.prod(shape))  # 640 * 480 * 3 = 921600
 
@@ -305,7 +230,8 @@ class AIPlateService:
                     "shm": shm_global,
                     "shape": shape,
                     "dtype": dtype,
-                    "ready_event": ready_event
+                    "ready_event": ready_event,
+                    "count_client": count_client,
                 }
                 self.shared_angles[camera_id] = angle_shared
                 self.shared_send_frame[camera_id] = count_client

@@ -70,6 +70,10 @@ class CameraService:
                 print(f"Lỗi xảy ra: {e}")
                 return {"status_code": 500, "message": str(e)}
 
+    async def get_all_cameras(self):
+        cameras = await Camera.select()
+        return cameras
+
 
 
 

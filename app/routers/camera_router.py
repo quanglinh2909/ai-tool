@@ -36,3 +36,7 @@ def draw_bounding_box(new_data: DrawBoundingBoxDTO):
     print(new_data)
 
     return ai_plate_service.update_shared_array(new_data.camera_id, new_data.data, new_data.angle)
+
+@router.get("/get-all")
+async def get_all_cameras():
+    return await camera_service.get_all_cameras()
