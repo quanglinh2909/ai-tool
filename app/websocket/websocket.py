@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from uuid import UUID
 
@@ -25,18 +26,19 @@ async def websocket_super_admin(websocket: WebSocket,rtsp,w,h):
     except WebSocketDisconnect:
         await connection_manager.disconnect(websocket)
 
+
 @router.websocket("/camera")
 async def websocket_endpoint(websocket: WebSocket, camera_id: str):
     await websocket.accept()
     print("🔌 Client đã kết nối WebSocket")
-
+    count_client_incremented = False
     try:
         camera_id = UUID(camera_id)
         if camera_id not in ai_plate_service.shared_memories:
-            # await websocket.close(code=1008, reason="Camera ID không hợp lệ hoặc không tồn tại.")
+            await websocket.close(code=1008, reason="Camera ID không hợp lệ hoặc không tồn tại.")
             return
         data = ai_plate_service.shared_memories[camera_id]
-        print("🔌 Client đã kết nối WebSocket",data)
+        print("🔌 Client đã kết nối WebSocket", data)
         shm = data.get("shm")
         shape = data.get("shape")
         dtype = data.get("dtype")
@@ -45,39 +47,54 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: str):
         frame_np = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
         # set count_client
         count_client.value += 1
-
+        count_client_incremented = True
         target_fps = 15
-
-        # Biến theo dõi thời gian cho việc giới hạn FPS
         last_frame_time = 0
-        frame_delay = 1.0 / target_fps  # Tính toán thời gian trễ giữa các frame
-        while True:
-            # print("🔌 Đang chờ frame mới từ camera...")
-            ready_event.wait()  # Đợi cho đến khi có frame mới
-            # print("🔌 Đã nhận frame mới từ camera")
+        frame_delay = 1.0 / target_fps
 
-            frame_copy = frame_np.copy()  # Copy ra riêng để tránh xung đột
+        while True:
+            # Phiên bản không chặn của việc đợi event
+            # Thêm timeout để tránh treo vô hạn
+            wait_start_time = time.time()
+            max_wait_time = 5.0  # 5 giây timeout
+
+            while not ready_event.is_set():
+                # Kiểm tra nếu đã đợi quá lâu
+                if time.time() - wait_start_time > max_wait_time:
+                    print("⚠️ Timeout đợi frame mới từ camera")
+                    # Gửi thông báo lỗi hoặc frame trống cho client
+                    await websocket.send_text(json.dumps({"error": "Camera timeout"}))
+                    await asyncio.sleep(1)  # Đợi 1 giây trước khi thử lại
+                    break
+                await asyncio.sleep(0.01)  # Sleep ngắn để không chặn event loop
+
+            # Nếu chờ quá lâu thì tiếp tục vòng lặp
+            if time.time() - wait_start_time > max_wait_time:
+                continue
+
+            frame_copy = frame_np.copy()
             ready_event.clear()  # Reset cờ
+
             current_time = time.time()
             time_elapsed = current_time - last_frame_time
 
-            # Nếu chưa đến thời gian cần lấy frame tiếp theo, sleep đi một chút
             if time_elapsed < frame_delay:
                 await asyncio.sleep(frame_delay - time_elapsed)
                 continue
 
+            last_frame_time = time.time()
+
             if frame_copy is not None:
-                # Encode frame thành JPEG
                 ret, buffer = cv2.imencode('.jpg', frame_copy)
-                # Gửi dữ liệu binary
                 await websocket.send_bytes(buffer.tobytes())
 
-            # Tạm dừng để không làm quá tải CPU
-            await asyncio.sleep(0.01)  # 100 FPS cap (thực tế sẽ thấp hơn do thời gian encode)
+            await asyncio.sleep(0.01)
 
     except WebSocketDisconnect:
         print("⚠️ WebSocket bị ngắt kết nối")
-        # Giảm số lượng client đang kết nối
-        count_client.value -= 1
     except Exception as e:
         print(f"❌ Lỗi WebSocket: {str(e)}")
+    finally:
+        # Đảm bảo giảm counter cho dù có lỗi xảy ra
+        if count_client_incremented and 'count_client' in locals():
+            count_client.value -= 1

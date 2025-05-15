@@ -74,6 +74,13 @@ class CameraService:
         cameras = await Camera.select()
         return cameras
 
+    async def get_by_id_camera(self, camera_id: UUID):
+        print("camera_id", camera_id)
+        camera = await Camera.objects().get(Camera.id == camera_id).first()
+        if camera:
+            return camera
+        return None
+
 
 
 

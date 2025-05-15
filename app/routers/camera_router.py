@@ -40,3 +40,12 @@ def draw_bounding_box(new_data: DrawBoundingBoxDTO):
 @router.get("/get-all")
 async def get_all_cameras():
     return await camera_service.get_all_cameras()
+
+@router.get("/get-by-id-camera/{camera_id}")
+async def get_camera_by_id(camera_id: UUID):
+    """
+    Get camera by id
+    """
+    return await camera_service.get_by_id_camera(camera_id)
+
+

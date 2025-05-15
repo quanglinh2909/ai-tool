@@ -4,14 +4,21 @@ from rknnlite.api import RKNNLite
 class RKNN_model_container():
     check = True
 
-    def __init__(self, model_path, target=None, device_id=None) -> None:
+    def __init__(self, model_path, target=None, device_id=None,stt=0) -> None:
         rknn = RKNNLite()
 
         # Direct Load RKNN Model
         rknn.load_rknn(model_path)
+        t = RKNNLite.NPU_CORE_0_1_2
+        if stt % 3 == 0:
+            t = RKNNLite.NPU_CORE_0
+        elif stt % 3 == 1:
+            t = RKNNLite.NPU_CORE_1
+        elif stt % 3 == 2:
+            t = RKNNLite.NPU_CORE_2
 
         print('--> Init runtime environment')
-        ret = rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_0_1_2)
+        ret = rknn.init_runtime(core_mask=t)
 
         if ret != 0:
             print('Init runtime environment failed')

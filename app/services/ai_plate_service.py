@@ -30,12 +30,13 @@ class AIPlateService:
         self.shared_memories = {}
         self.shared_angles = {}
         self.shared_send_frame = {}
+        self.stt = 0
         # Khởi động thread giám sát quy trình
         # threading.Thread(target=self.check_processes, daemon=True).start()
 
 
 
-    def worker(self, camera_id, rtsp, shared_array, angle_shared, count_client, shm_name, shape, dtype, ready_event,
+    def worker(self, stt,camera_id, rtsp, shared_array, angle_shared, count_client, shm_name, shape, dtype, ready_event,
                is_show=True):
         CLASSES = ("person", "bicycle", "car", "motorbike ", "aeroplane ", "bus ", "train", "truck ", "boat",
                    "traffic light",
@@ -65,6 +66,7 @@ class AIPlateService:
 
         max_size_queue = 1
         # Thiết lập threading
+
         frame_queue = queue.Queue(maxsize=max_size_queue)
         stop_event = threading.Event()
 
@@ -151,7 +153,7 @@ class AIPlateService:
                 #     break
 
                 if client_count > 0:
-                    frame = cv2.resize(frame, (320, 320))
+                    frame = cv2.resize(frame, (640, 480))
                     np.copyto(frame_np, frame)
                     # Đánh dấu là đã sẵn sàng
                     ready_event.set()
@@ -183,6 +185,7 @@ class AIPlateService:
             return False
 
         try:
+
             # Chuyển đổi dữ liệu thành mảng numpy
             shared_data = np.array([[p["x"], p["y"]] for p in points], dtype=np.float64)
             shared_array = multiprocessing.Array('d', shared_data.flatten())  # 'd' là kiểu float64
@@ -202,7 +205,7 @@ class AIPlateService:
 
             # Cấu hình shared memory cho frame
             # shape = (height, width, 3)  # height, width, channels
-            shape = (320,320, 3)  # height, width, channels
+            shape = (480  , 640, 3)  # height, width, channels
             dtype = np.uint8
             size = int(np.prod(shape))  # 640 * 480 * 3 = 921600
 
@@ -217,7 +220,7 @@ class AIPlateService:
                 # Khởi động worker process
                 process = multiprocessing.Process(
                     target=self.worker,
-                    args=(camera_id, rtsp, shared_array, angle_shared, count_client,
+                    args=(self.stt,camera_id, rtsp, shared_array, angle_shared, count_client,
                           shm_global.name, shape, dtype, ready_event),
                     daemon=True
                 )
@@ -236,6 +239,7 @@ class AIPlateService:
                 }
                 self.shared_angles[camera_id] = angle_shared
                 self.shared_send_frame[camera_id] = count_client
+                self.stt += 1
 
                 print(f"Đã thêm camera {camera_id} thành công")
                 return True
@@ -363,6 +367,7 @@ class AIPlateService:
     def get_cameras(self):
         """Trả về danh sách camera đang hoạt động"""
         return list(self.processes.keys())
+
 
 
 # Tạo instance mặc định

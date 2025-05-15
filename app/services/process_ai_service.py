@@ -29,5 +29,11 @@ class ProcessAiService:
                 points = json.loads(points)
                 ai_plate_service.add_camera(id, rtsp,points,int(direction))
 
+    async def get_process_ai_by_camera_id(self, camera_id):
+        process_ai = await ProcessAI.select().where(ProcessAI.camera == camera_id)
+        if process_ai:
+            return process_ai
+        return None
+
 
 process_ai_service = ProcessAiService()
