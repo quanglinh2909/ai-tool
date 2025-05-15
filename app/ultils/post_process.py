@@ -184,7 +184,7 @@ def setup_model(args):
     elif model_path.endswith('.rknn'):
         platform = 'rknn'
         from app.ultils.rknn_executor import RKNN_model_container
-        model = RKNN_model_container(model_path, args.get("target"), args.get("device_id"))
+        model = RKNN_model_container(model_path, args.get("target"), args.get("device_id"), args.get("stt"))
     elif model_path.endswith('onnx'):
         platform = 'onnx'
         from app.ultils.onnx_executor import ONNX_model_container

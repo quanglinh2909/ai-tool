@@ -60,6 +60,7 @@ class AIPlateService:
         co_helper = COCO_test_helper(enable_letter_box=True)
         platform = get_os_name()
         args = get_model_plate_platform(platform)
+        args["stt"] = stt
         print("args",args)
         model, _platform = setup_model(args)
 
