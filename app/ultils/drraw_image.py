@@ -54,13 +54,10 @@ def draw_moving_path(frame, display_frame, track, is_draw_display=True, is_draw_
             cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=2)
 
 # Vẽ box cho đối tượng
-def draw_box(frame, display_frame, x, y, w, h, is_draw_display=True, is_draw_frame=True):
-    x1, y1 = int(x - w / 2), int(y - h / 2)
-    x2, y2 = int(x + w / 2), int(y + h / 2)
-    if is_draw_display:
-        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-    if is_draw_frame:
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+def draw_box(frame, top, left, right, bottom,  is_draw=True):
+    if is_draw:
+        cv2.rectangle(frame, (top, left), (right, bottom), (255, 0, 0), 2)
+
 
 # Hiển thị thông tin tổng hợp
 def draw_info(frame,display_frame, objects_following_arrow,objects_in_roi, is_draw_display=True,is_draw_frame=True):

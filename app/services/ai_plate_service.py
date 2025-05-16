@@ -15,10 +15,13 @@ from app.ultils.camera_ultil import get_model_plate_platform, decode_frames
 from app.ultils.centroid_tracker import CentroidTracker, draw_tracks
 from app.ultils.check_platform import get_os_name
 from app.ultils.coco_utils import COCO_test_helper
-from app.ultils.drraw_image import draw_identification_area, draw_direction_vector
+from app.ultils.drraw_image import draw_identification_area, draw_direction_vector, draw_box
 from app.ultils.post_process import setup_model, post_process
 
 import os
+
+from app.ultils.ultils import point_in_polygon
+
 os.environ['RKNN_LOG_LEVEL'] = '0'
 class AIPlateService:
     def __init__(self):
@@ -137,14 +140,21 @@ class AIPlateService:
                 outputs = model.run([img])
                 boxes, classes, scores = post_process(outputs)
 
+                roi_points_drawn, roi_points = draw_identification_area(data, frame, is_draw=True)
+                arrow_vector = draw_direction_vector(roi_points_drawn, frame, angle, is_draw=True)
+
                 if boxes is not None and len(boxes) > 0:
                     # Chuyển đổi boxes về tọa độ thực
                     real_boxes = co_helper.get_real_box(boxes)
 
-                    # Cập nhật tracker
-                    tracks = tracker.update(real_boxes, scores, classes)
-                    # Vẽ các track lên frame
-                    frame = draw_tracks(frame, tracks, CLASSES)
+                    for box, score, cl in zip(real_boxes, scores, classes):
+                        x, y, w, h = [int(_b) for _b in box]
+                        draw_box(frame, x, y, w, h, is_draw=True)
+
+                    # # Cập nhật tracker
+                    # tracks = tracker.update(real_boxes, scores, classes)
+                    # # Vẽ các track lên frame
+                    # frame = draw_tracks(frame, tracks, CLASSES)
 
                 # Tính FPS thực tế để hiển thị
                 frame_count += 1
@@ -160,10 +170,9 @@ class AIPlateService:
                 cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                roi_points_drawn, roi_points = draw_identification_area(data, frame, is_draw=True)
 
-                # Vẽ mũi tên chỉ hướng
-                arrow_vector = draw_direction_vector(roi_points_drawn, frame, angle, is_draw=True)
+
+
 
                 if client_count > 0:
                     frame = cv2.resize(frame, (640, 480))
