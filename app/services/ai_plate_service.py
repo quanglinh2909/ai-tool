@@ -149,15 +149,21 @@ class AIPlateService:
                     tracks = tracker.update(real_boxes, scores, classes)
 
                     for box, score, cl in zip(real_boxes, scores, classes):
-                        # Verify the coordinate order in the box unpacking
-                        # Assuming box format is [top, left, right, bottom]
-                        # If it's different, adjust accordingly
+                        # Based on your drawing function:
+                        # cv2.rectangle(frame, (top, left), (right, bottom), (255, 0, 0), 2)
+                        # Where the expected format for cv2.rectangle is:
+                        # cv2.rectangle(img, pt1, pt2, color, thickness)
+                        # And pt1=(x1,y1), pt2=(x2,y2)
+                        #
+                        # This suggests your variables are actually:
+                        # top = x1, left = y1, right = x2, bottom = y2
                         top, left, right, bottom = [int(_b) for _b in box]
                         draw_box(frame, top, left, right, bottom, is_draw=True)
 
-                        # Fix: Ensure center calculation uses x,y coordinate ordering
-                        # For an x,y coordinate system: center_x = (left + right)/2, center_y = (top + bottom)/2
-                        center_point = ((left + right) // 2, (top + bottom) // 2)
+                        # Fix: Calculate center point with your specific coordinate system
+                        center_x = (top + right) // 2
+                        center_y = (left + bottom) // 2
+                        center_point = (center_x, center_y)
 
                         # Visualize the center point for debugging
                         cv2.circle(frame, center_point, 5, (0, 255, 255), -1)  # Draw a yellow dot at center
