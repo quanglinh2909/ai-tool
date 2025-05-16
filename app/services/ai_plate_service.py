@@ -154,6 +154,15 @@ class AIPlateService:
                     # Vẽ các track lên frame
                     frame = draw_tracks(frame, tracks, CLASSES)
 
+
+
+
+
+                    # # Cập nhật tracker
+                    #
+                    # # Vẽ các track lên frame
+                    # frame = draw_tracks(frame, tracks, CLASSES)
+
                 # Tính FPS thực tế để hiển thị
                 frame_count += 1
                 elapsed_time = time.time() - start_time
