@@ -161,6 +161,9 @@ class AIPlateService:
 
                         if in_roi:
                             print("Đối tượng nằm trong ROI")
+                            cv2.putText(frame, "In ROI", (left, top - 10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
                             # movement_vector = get_direction_vector(track)
                             # # Tính độ tương đồng giữa hướng di chuyển và hướng mũi tên
                             # similarity = direction_similarity(movement_vector, arrow_vector)
@@ -178,6 +181,8 @@ class AIPlateService:
                             #     status = "Theo huong"
                         else:
                             print("Đối tượng không nằm trong ROI")
+                            cv2.putText(frame, "Not In ROI", (left, top - 10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
 
 
