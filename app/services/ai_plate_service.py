@@ -140,57 +140,19 @@ class AIPlateService:
                 outputs = model.run([img])
                 boxes, classes, scores = post_process(outputs)
 
+                # Lấy ROI và vẽ lên frame
                 roi_points_drawn, roi_points = draw_identification_area(data, frame, is_draw=True)
                 arrow_vector = draw_direction_vector(roi_points_drawn, frame, angle, is_draw=True)
 
                 if boxes is not None and len(boxes) > 0:
                     # Chuyển đổi boxes về tọa độ thực
                     real_boxes = co_helper.get_real_box(boxes)
-                    tracks = tracker.update(real_boxes, scores, classes)
 
-                    for box, object_id, score, class_id, color, track_duration in tracks:
-                        # Based on your drawing function:
-                        # cv2.rectangle(frame, (top, left), (right, bottom), (255, 0, 0), 2)
-                        # Where the expected format for cv2.rectangle is:
-                        # cv2.rectangle(img, pt1, pt2, color, thickness)
-                        # And pt1=(x1,y1), pt2=(x2,y2)
-                        #
-                        # This suggests your variables are actually:
-                        # top = x1, left = y1, right = x2, bottom = y2
-                        top, left, right, bottom = [int(_b) for _b in box]
-                        draw_box(frame, top, left, right, bottom, is_draw=True)
+                    # Cập nhật tracker với roi_points để chỉ track các đối tượng trong ROI
+                    tracks = tracker.update(real_boxes, scores, classes, roi_points)
 
-                        # Fix: Calculate center point with your specific coordinate system
-                        center_x = (top + right) // 2
-                        center_y = (left + bottom) // 2
-                        center_point = (center_x, center_y)
-
-                        # Visualize the center point for debugging
-                        cv2.circle(frame, center_point, 5, (0, 255, 255), -1)  # Draw a yellow dot at center
-
-                        # Kiểm tra xem điểm trung tâm có nằm trong ROI không
-                        in_roi = False
-                        if roi_points is not None:
-                            # Kiểm tra xem đối tượng có nằm trong ROI không
-                            in_roi = point_in_polygon(center_point, roi_points)
-
-                        if in_roi:
-                            # print("Đối tượng nằm trong ROI")
-                            cv2.putText(frame, "In ROI", (10, 50),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        else:
-                            # print("Đối tượng không nằm trong ROI")
-                            cv2.putText(frame, "Not In ROI", (10, 50),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-
-
-
-
-                    # # Cập nhật tracker
-                    #
-                    # # Vẽ các track lên frame
-                    # frame = draw_tracks(frame, tracks, CLASSES)
+                    # Vẽ các track lên frame
+                    frame = draw_tracks(frame, tracks, CLASSES)
 
                 # Tính FPS thực tế để hiển thị
                 frame_count += 1

@@ -4,15 +4,12 @@ import cv2
 import time
 from datetime import datetime, timedelta
 
-# Thêm vào đầu file centroid_tracker.py
-# filepath: d:\Python\ai-tool\test\centroid_tracker.py
-# Định nghĩa lại các class hoặc import từ nơi khác
-
 
 class CentroidTracker:
     """
     Centroid Tracker - Thuật toán tracking nhẹ nhất
     Chỉ sử dụng khoảng cách Euclid giữa các tâm bbox
+    Chỉ track các đối tượng trong vùng ROI
     """
 
     def __init__(self, max_disappeared=30, max_distance=50):
@@ -36,14 +33,46 @@ class CentroidTracker:
         """
         Tính tọa độ tâm của bbox
         """
-        x1, y1, x2, y2 = bbox
-        cX = int((x1 + x2) / 2)
-        cY = int((y1 + y2) / 2)
-        return (cX, cY)
+        top, left, right, bottom = bbox  # Theo format của bạn
+        center_x = int((top + right) / 2)
+        center_y = int((left + bottom) / 2)
+        return (center_x, center_y)
 
-    def update(self, boxes, scores=None, classes=None):
+    def _is_in_roi(self, centroid, roi_points):
+        """
+        Kiểm tra xem centroid có nằm trong ROI không
+        """
+        if roi_points is None or len(roi_points) < 3:
+            return True  # Nếu không có ROI, coi như nằm trong ROI
+
+        return self._point_in_polygon(centroid, roi_points)
+
+    def _point_in_polygon(self, point, polygon):
+        """
+        Kiểm tra một điểm có nằm trong đa giác không sử dụng thuật toán ray casting
+        """
+        x, y = point
+        n = len(polygon)
+        inside = False
+
+        p1x, p1y = polygon[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+
+        return inside
+
+    def update(self, boxes, scores=None, classes=None, roi_points=None):
         """
         Cập nhật tracker với bbox mới
+        Chỉ xem xét các box nằm trong ROI
         """
         # Lưu danh sách ID hiện tại để xác định các đối tượng đã biến mất
         current_ids = set(self.objects.keys())
@@ -57,7 +86,7 @@ class CentroidTracker:
 
                 if self.disappeared[object_id] > self.max_disappeared:
                     # Thông báo đối tượng mất tracking
-                    self._report_object_lost(object_id,classes)
+                    self._report_object_lost(object_id, classes)
                     self.deregister(object_id)
 
             return self._get_result()
@@ -65,12 +94,36 @@ class CentroidTracker:
         # Tính tâm của tất cả bbox mới
         centroids = [self._get_centroid(box) for box in boxes]
 
+        # Lọc chỉ giữ lại các box nằm trong ROI
+        valid_indices = []
+        for i, centroid in enumerate(centroids):
+            if self._is_in_roi(centroid, roi_points):
+                valid_indices.append(i)
+
+        # Lọc boxes, centroids, scores, classes theo valid_indices
+        filtered_boxes = [boxes[i] for i in valid_indices]
+        filtered_centroids = [centroids[i] for i in valid_indices]
+        filtered_scores = None if scores is None else [scores[i] for i in valid_indices]
+        filtered_classes = None if classes is None else [classes[i] for i in valid_indices]
+
+        # Nếu không có object nào trong ROI
+        if len(filtered_boxes) == 0:
+            # Đánh dấu tất cả objects hiện tại là disappeared
+            for object_id in list(self.disappeared.keys()):
+                self.disappeared[object_id] += 1
+
+                if self.disappeared[object_id] > self.max_disappeared:
+                    self._report_object_lost(object_id, classes)
+                    self.deregister(object_id)
+
+            return self._get_result()
+
         # Nếu chưa có object nào được theo dõi
         if len(self.objects) == 0:
-            for i in range(len(centroids)):
-                object_id = self.register(centroids[i], boxes[i],
-                                          scores[i] if scores is not None else None,
-                                          classes[i] if classes is not None else None,classes)
+            for i in range(len(filtered_centroids)):
+                object_id = self.register(filtered_centroids[i], filtered_boxes[i],
+                                          filtered_scores[i] if filtered_scores is not None else None,
+                                          filtered_classes[i] if filtered_classes is not None else None, classes)
                 new_ids.add(object_id)
         else:
             # Lấy ID và tâm của các object đang theo dõi
@@ -78,7 +131,7 @@ class CentroidTracker:
             object_centroids = list(self.objects.values())
 
             # Tính ma trận khoảng cách giữa các centroids
-            D = distance.cdist(object_centroids, centroids)
+            D = distance.cdist(object_centroids, filtered_centroids)
 
             # Tìm chỉ số có khoảng cách nhỏ nhất cho mỗi hàng
             rows = D.min(axis=1).argsort()
@@ -96,12 +149,12 @@ class CentroidTracker:
 
                 # Lấy ID của object hiện tại và reset disappeared counter
                 object_id = object_ids[row]
-                self.objects[object_id] = centroids[col]
-                self.bbox[object_id] = boxes[col]
-                if scores is not None:
-                    self.scores[object_id] = scores[col]
-                if classes is not None:
-                    self.class_ids[object_id] = classes[col]
+                self.objects[object_id] = filtered_centroids[col]
+                self.bbox[object_id] = filtered_boxes[col]
+                if filtered_scores is not None:
+                    self.scores[object_id] = filtered_scores[col]
+                if filtered_classes is not None:
+                    self.class_ids[object_id] = filtered_classes[col]
                 self.disappeared[object_id] = 0
 
                 # Cập nhật thời gian tracking
@@ -127,15 +180,15 @@ class CentroidTracker:
 
                     if self.disappeared[object_id] > self.max_disappeared:
                         # Thông báo đối tượng mất tracking
-                        self._report_object_lost(object_id,classes)
+                        self._report_object_lost(object_id, classes)
                         self.deregister(object_id)
 
             # Nếu có objects mới xuất hiện
             else:
                 for col in unused_cols:
-                    object_id = self.register(centroids[col], boxes[col],
-                                              scores[col] if scores is not None else None,
-                                              classes[col] if classes is not None else None,classes)
+                    object_id = self.register(filtered_centroids[col], filtered_boxes[col],
+                                              filtered_scores[col] if filtered_scores is not None else None,
+                                              filtered_classes[col] if filtered_classes is not None else None, classes)
                     new_ids.add(object_id)
 
         # Xác định đối tượng nào đã biến mất (không còn trong new_ids)
@@ -146,12 +199,12 @@ class CentroidTracker:
 
                 if self.disappeared[object_id] > self.max_disappeared:
                     # Thông báo đối tượng mất tracking
-                    self._report_object_lost(object_id,classes)
+                    self._report_object_lost(object_id, classes)
                     self.deregister(object_id)
 
         return self._get_result()
 
-    def register(self, centroid, bbox, score=None, class_id=None,classes=None):
+    def register(self, centroid, bbox, score=None, class_id=None, classes=None):
         """
         Đăng ký object mới
         """
@@ -174,7 +227,7 @@ class CentroidTracker:
         self.track_duration[object_id] = 0
 
         # Thông báo đối tượng mới
-        self._report_new_object(object_id,classes)
+        self._report_new_object(object_id, classes)
 
         self.next_object_id += 1
         return object_id
@@ -201,23 +254,25 @@ class CentroidTracker:
         if object_id in self.track_duration:
             del self.track_duration[object_id]
 
-    def _report_new_object(self, object_id,class_names):
+    def _report_new_object(self, object_id, class_names):
         """
         Thông báo đối tượng mới xuất hiện
         """
         class_id = self.class_ids.get(object_id)
-        class_name = class_names[class_id] if class_id is not None and class_id < len(class_names) else "Unknown"
+        class_name = class_names[class_id] if class_id is not None and class_names is not None and class_id < len(
+            class_names) else "Unknown"
         score = self.scores.get(object_id, 0)
 
         current_time = datetime.now().strftime("%H:%M:%S")
         print(f"[{current_time}] ID:{object_id} {class_name} (score: {score:.2f}) XUẤT HIỆN")
 
-    def _report_object_lost(self, object_id,class_names):
+    def _report_object_lost(self, object_id, class_names):
         """
         Thông báo đối tượng mất tracking
         """
         class_id = self.class_ids.get(object_id)
-        class_name = class_names[class_id] if class_id is not None and class_id < len(class_names) else "Unknown"
+        class_name = class_names[class_id] if class_id is not None and class_names is not None and class_id < len(
+            class_names) else "Unknown"
 
         # Tính thời gian theo dõi
         duration = self.track_duration.get(object_id, 0)
@@ -251,17 +306,20 @@ def draw_tracks(image, tracks, class_names=None):
     """
     for track in tracks:
         bbox, track_id, score, class_id, color, duration = track
-        x1, y1, x2, y2 = [int(i) for i in bbox]
+        top, left, right, bottom = [int(i) for i in bbox]  # Theo format của bạn
 
         # Vẽ bbox
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(image, (top, left), (right, bottom), color, 2)
 
         # Vẽ centroid
-        centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+        center_x = (top + right) // 2
+        center_y = (left + bottom) // 2
+        centroid = (center_x, center_y)
         cv2.circle(image, centroid, 4, color, -1)
 
         # Hiển thị ID và class
-        class_name = class_names[class_id] if class_id is not None and class_names is not None else "Unknown"
+        class_name = class_names[class_id] if class_id is not None and class_names is not None and class_id < len(
+            class_names) else "Unknown"
         score_text = f":{score:.2f}" if score is not None else ""
 
         # Định dạng thời gian tracking
@@ -284,10 +342,10 @@ def draw_tracks(image, tracks, class_names=None):
         time_label = f"Time: {duration_str}"
 
         # Vẽ nền cho text
-        cv2.rectangle(image, (x1, y1 - 40), (x1 + max(len(label), len(time_label)) * 8, y1), color, -1)
+        cv2.rectangle(image, (top, left - 40), (top + max(len(label), len(time_label)) * 8, left), color, -1)
 
         # Hiển thị text
-        cv2.putText(image, label, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(image, time_label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(image, label, (top, left - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(image, time_label, (top, left - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     return image
