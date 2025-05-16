@@ -4,13 +4,21 @@ import numpy as np
 from app.ultils.ultils import calculate_arrow_end
 
 
-def draw_identification_area(data, display_frame, is_draw=True):
+def draw_identification_area(data, display_frame,size_scal=(640,480), is_draw=True):
+    # tinh toan w,h cua display_frame
+    w = display_frame.shape[1]
+    h = display_frame.shape[0]
+
     data_box = []
     for i in range(len(data)):
         x = data[i][0]
         y = data[i][1]
         if x == -1 and y == -1:
             continue
+        # tinh toan x,y trong display_frame
+        x = int(x * w / size_scal[0])
+        y = int(y * h / size_scal[1])
+
         data_box.append({"x": x, "y": y})
     # Store the track history
 
