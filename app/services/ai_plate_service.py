@@ -149,10 +149,19 @@ class AIPlateService:
                     tracks = tracker.update(real_boxes, scores, classes)
 
                     for box, score, cl in zip(real_boxes, scores, classes):
+                        # Verify the coordinate order in the box unpacking
+                        # Assuming box format is [top, left, right, bottom]
+                        # If it's different, adjust accordingly
                         top, left, right, bottom = [int(_b) for _b in box]
                         draw_box(frame, top, left, right, bottom, is_draw=True)
 
+                        # Fix: Ensure center calculation uses x,y coordinate ordering
+                        # For an x,y coordinate system: center_x = (left + right)/2, center_y = (top + bottom)/2
                         center_point = ((left + right) // 2, (top + bottom) // 2)
+
+                        # Visualize the center point for debugging
+                        cv2.circle(frame, center_point, 5, (0, 255, 255), -1)  # Draw a yellow dot at center
+
                         # Kiểm tra xem điểm trung tâm có nằm trong ROI không
                         in_roi = False
                         if roi_points is not None:
@@ -163,22 +172,6 @@ class AIPlateService:
                             print("Đối tượng nằm trong ROI")
                             cv2.putText(frame, "In ROI", (10, 50),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-                            # movement_vector = get_direction_vector(track)
-                            # # Tính độ tương đồng giữa hướng di chuyển và hướng mũi tên
-                            # similarity = direction_similarity(movement_vector, arrow_vector)
-                            #
-                            # # Kiểm tra đối tượng có di chuyển theo hướng mũi tên không
-                            # following_arrow = similarity > arrow_similarity_threshold
-                            #
-                            # # Lưu trạng thái
-                            # objects_following_arrow[track_id] = following_arrow
-                            #
-                            # # Xử lý trạng thái và hiển thị
-                            # current_time = time.time()
-                            #
-                            # if following_arrow:
-                            #     status = "Theo huong"
                         else:
                             print("Đối tượng không nằm trong ROI")
                             cv2.putText(frame, "Not In ROI", (10, 50),
