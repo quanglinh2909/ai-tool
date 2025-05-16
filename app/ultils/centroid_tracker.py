@@ -210,7 +210,7 @@ class CentroidTracker:
         score = self.scores.get(object_id, 0)
 
         current_time = datetime.now().strftime("%H:%M:%S")
-        # print(f"[{current_time}] ID:{object_id} {class_name} (score: {score:.2f}) XUẤT HIỆN")
+        print(f"[{current_time}] ID:{object_id} {class_name} (score: {score:.2f}) XUẤT HIỆN")
 
     def _report_object_lost(self, object_id,class_names):
         """
@@ -224,7 +224,7 @@ class CentroidTracker:
         duration_str = str(timedelta(seconds=int(duration)))
 
         current_time = datetime.now().strftime("%H:%M:%S")
-        # print(f"[{current_time}] ID:{object_id} {class_name} MẤT TRACKING sau {duration_str}")
+        print(f"[{current_time}] ID:{object_id} {class_name} MẤT TRACKING sau {duration_str}")
 
     def _get_result(self):
         """

@@ -148,7 +148,7 @@ class AIPlateService:
                     real_boxes = co_helper.get_real_box(boxes)
                     tracks = tracker.update(real_boxes, scores, classes)
 
-                    for box, score, cl in zip(real_boxes, scores, classes):
+                    for box, object_id, score, class_id, color, track_duration in tracks:
                         # Based on your drawing function:
                         # cv2.rectangle(frame, (top, left), (right, bottom), (255, 0, 0), 2)
                         # Where the expected format for cv2.rectangle is:
@@ -175,11 +175,11 @@ class AIPlateService:
                             in_roi = point_in_polygon(center_point, roi_points)
 
                         if in_roi:
-                            print("Đối tượng nằm trong ROI")
+                            # print("Đối tượng nằm trong ROI")
                             cv2.putText(frame, "In ROI", (10, 50),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                         else:
-                            print("Đối tượng không nằm trong ROI")
+                            # print("Đối tượng không nằm trong ROI")
                             cv2.putText(frame, "Not In ROI", (10, 50),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
@@ -199,7 +199,7 @@ class AIPlateService:
                 # Cập nhật FPS sau mỗi giây
                 if elapsed_time > 1:
                     fps = frame_count / elapsed_time
-                    print('{} - FPS: {:.2f} (target: {})'.format(camera_id, fps, target_fps))
+                    # print('{} - FPS: {:.2f} (target: {})'.format(camera_id, fps, target_fps))
                     frame_count = 0
                     start_time = time.time()
 
