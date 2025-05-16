@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     print("Starting the server")
     yield
     print("Shutting down the server")
+    ai_plate_service.cleanup_all()
 
 
 app = FastAPI(

@@ -78,6 +78,6 @@ def get_model_plate_platform(platform=None) -> dict[str, str | None]:
     if platform is None:
         platform = get_os_name()
     if platform == PlatformEnum.ORANGE_PI_MAX or platform == PlatformEnum.ORANGE_PI:
-        return {"model_path": "app/weights/yolov6.rknn", "target": "rk3588", "device_id": None}
+        return {"model_path": "app/weights/plate_number.rknn", "target": "rk3588", "device_id": None}
 
-    return {"model_path": "app/weights/yolov6n.onnx"}
+    return {"model_path": "app/weights/plate_number.onnx"}
