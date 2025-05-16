@@ -15,6 +15,7 @@ from app.ultils.camera_ultil import get_model_plate_platform, decode_frames
 from app.ultils.centroid_tracker import CentroidTracker, draw_tracks
 from app.ultils.check_platform import get_os_name
 from app.ultils.coco_utils import COCO_test_helper
+from app.ultils.drraw_image import draw_identification_area, draw_direction_vector
 from app.ultils.post_process import setup_model, post_process
 
 import os
@@ -66,23 +67,7 @@ class AIPlateService:
         signal.signal(signal.SIGINT, lambda sig, frame: exit(0))
 
         # Còn lại giữ nguyên...
-        CLASSES = ("person", "bicycle", "car", "motorbike ", "aeroplane ", "bus ", "train", "truck ", "boat",
-                   "traffic light",
-                   "fire hydrant", "stop sign ", "parking meter", "bench", "bird", "cat", "dog ", "horse ", "sheep",
-                   "cow",
-                   "elephant",
-                   "bear", "zebra ", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
-                   "snowboard", "sports ball", "kite",
-                   "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass",
-                   "cup",
-                   "fork", "knife ",
-                   "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza ",
-                   "donut",
-                   "cake", "chair", "sofa",
-                   "pottedplant", "bed", "diningtable", "toilet ", "tvmonitor", "laptop	", "mouse	", "remote ",
-                   "keyboard ", "cell phone", "microwave ",
-                   "oven ", "toaster", "sink", "refrigerator ", "book", "clock", "vase", "scissors ", "teddy bear ",
-                   "hair drier", "toothbrush ")
+        CLASSES = ("plate")
         IMG_SIZE = (640, 640)
         tracker = CentroidTracker(max_disappeared=20, max_distance=50)
         co_helper = COCO_test_helper(enable_letter_box=True)
@@ -121,6 +106,8 @@ class AIPlateService:
         while not stop_event.is_set() and not self.stop_event.is_set():
             try:
                 client_count = count_client.value
+                data = np.array(shared_array).reshape(-1, 2)
+                angle = angle_shared.value
 
                 # Tính thời gian cần thiết để đạt được FPS mục tiêu
                 current_time = time.time()
@@ -172,6 +159,11 @@ class AIPlateService:
 
                 cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                roi_points_drawn, roi_points = draw_identification_area(data, frame, is_draw=True)
+
+                # Vẽ mũi tên chỉ hướng
+                arrow_vector = draw_direction_vector(roi_points_drawn, frame, angle, is_draw=True)
 
                 if client_count > 0:
                     frame = cv2.resize(frame, (640, 480))

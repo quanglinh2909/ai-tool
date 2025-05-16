@@ -7,15 +7,6 @@ from datetime import datetime, timedelta
 # Thêm vào đầu file centroid_tracker.py
 # filepath: d:\Python\ai-tool\test\centroid_tracker.py
 # Định nghĩa lại các class hoặc import từ nơi khác
-CLASSES = ("person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat", "traffic light",
-           "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-           "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-           "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-           "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-           "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "sofa",
-           "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote", "keyboard",
-           "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
-           "teddy bear", "hair drier", "toothbrush")
 
 
 class CentroidTracker:
@@ -210,23 +201,23 @@ class CentroidTracker:
         if object_id in self.track_duration:
             del self.track_duration[object_id]
 
-    def _report_new_object(self, object_id):
+    def _report_new_object(self, object_id,class_names):
         """
         Thông báo đối tượng mới xuất hiện
         """
         class_id = self.class_ids.get(object_id)
-        class_name = CLASSES[class_id] if class_id is not None and class_id < len(CLASSES) else "Unknown"
+        class_name = class_names[class_id] if class_id is not None and class_id < len(class_names) else "Unknown"
         score = self.scores.get(object_id, 0)
 
         current_time = datetime.now().strftime("%H:%M:%S")
         # print(f"[{current_time}] ID:{object_id} {class_name} (score: {score:.2f}) XUẤT HIỆN")
 
-    def _report_object_lost(self, object_id):
+    def _report_object_lost(self, object_id,class_names):
         """
         Thông báo đối tượng mất tracking
         """
         class_id = self.class_ids.get(object_id)
-        class_name = CLASSES[class_id] if class_id is not None and class_id < len(CLASSES) else "Unknown"
+        class_name = class_names[class_id] if class_id is not None and class_id < len(class_names) else "Unknown"
 
         # Tính thời gian theo dõi
         duration = self.track_duration.get(object_id, 0)
