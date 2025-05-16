@@ -17,7 +17,8 @@ from app.ultils.check_platform import get_os_name
 from app.ultils.coco_utils import COCO_test_helper
 from app.ultils.post_process import setup_model, post_process
 
-
+import os
+os.environ['RKNN_LOG_LEVEL'] = '0'
 class AIPlateService:
     def __init__(self):
         self.processes = {}
