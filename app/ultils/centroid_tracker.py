@@ -57,7 +57,7 @@ class CentroidTracker:
 
                 if self.disappeared[object_id] > self.max_disappeared:
                     # Thông báo đối tượng mất tracking
-                    self._report_object_lost(object_id)
+                    self._report_object_lost(object_id,classes)
                     self.deregister(object_id)
 
             return self._get_result()
@@ -70,7 +70,7 @@ class CentroidTracker:
             for i in range(len(centroids)):
                 object_id = self.register(centroids[i], boxes[i],
                                           scores[i] if scores is not None else None,
-                                          classes[i] if classes is not None else None)
+                                          classes[i] if classes is not None else None,classes)
                 new_ids.add(object_id)
         else:
             # Lấy ID và tâm của các object đang theo dõi
@@ -127,7 +127,7 @@ class CentroidTracker:
 
                     if self.disappeared[object_id] > self.max_disappeared:
                         # Thông báo đối tượng mất tracking
-                        self._report_object_lost(object_id)
+                        self._report_object_lost(object_id,classes)
                         self.deregister(object_id)
 
             # Nếu có objects mới xuất hiện
@@ -135,7 +135,7 @@ class CentroidTracker:
                 for col in unused_cols:
                     object_id = self.register(centroids[col], boxes[col],
                                               scores[col] if scores is not None else None,
-                                              classes[col] if classes is not None else None)
+                                              classes[col] if classes is not None else None,classes)
                     new_ids.add(object_id)
 
         # Xác định đối tượng nào đã biến mất (không còn trong new_ids)
@@ -146,12 +146,12 @@ class CentroidTracker:
 
                 if self.disappeared[object_id] > self.max_disappeared:
                     # Thông báo đối tượng mất tracking
-                    self._report_object_lost(object_id)
+                    self._report_object_lost(object_id,classes)
                     self.deregister(object_id)
 
         return self._get_result()
 
-    def register(self, centroid, bbox, score=None, class_id=None):
+    def register(self, centroid, bbox, score=None, class_id=None,classes=None):
         """
         Đăng ký object mới
         """
@@ -174,7 +174,7 @@ class CentroidTracker:
         self.track_duration[object_id] = 0
 
         # Thông báo đối tượng mới
-        self._report_new_object(object_id)
+        self._report_new_object(object_id,classes)
 
         self.next_object_id += 1
         return object_id
