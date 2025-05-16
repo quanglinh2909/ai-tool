@@ -20,7 +20,7 @@ from app.ultils.post_process import setup_model, post_process
 
 import os
 
-from app.ultils.ultils import point_in_polygon
+from app.ultils.ultils import point_in_polygon, get_direction_vector, direction_similarity
 
 os.environ['RKNN_LOG_LEVEL'] = '0'
 class AIPlateService:
@@ -146,13 +146,45 @@ class AIPlateService:
                 if boxes is not None and len(boxes) > 0:
                     # Chuyển đổi boxes về tọa độ thực
                     real_boxes = co_helper.get_real_box(boxes)
+                    tracks = tracker.update(real_boxes, scores, classes)
 
                     for box, score, cl in zip(real_boxes, scores, classes):
-                        x, y, w, h = [int(_b) for _b in box]
-                        draw_box(frame, x, y, w, h, is_draw=True)
+                        top, left, right, bottom = [int(_b) for _b in box]
+                        draw_box(frame, top, left, right, bottom, is_draw=True)
+
+                        center_point = ((left + right) // 2, (top + bottom) // 2)
+                        # Kiểm tra xem điểm trung tâm có nằm trong ROI không
+                        in_roi = False
+                        if roi_points is not None:
+                            # Kiểm tra xem đối tượng có nằm trong ROI không
+                            in_roi = point_in_polygon(center_point, roi_points)
+
+                        if in_roi:
+                            print("Đối tượng nằm trong ROI")
+                            # movement_vector = get_direction_vector(track)
+                            # # Tính độ tương đồng giữa hướng di chuyển và hướng mũi tên
+                            # similarity = direction_similarity(movement_vector, arrow_vector)
+                            #
+                            # # Kiểm tra đối tượng có di chuyển theo hướng mũi tên không
+                            # following_arrow = similarity > arrow_similarity_threshold
+                            #
+                            # # Lưu trạng thái
+                            # objects_following_arrow[track_id] = following_arrow
+                            #
+                            # # Xử lý trạng thái và hiển thị
+                            # current_time = time.time()
+                            #
+                            # if following_arrow:
+                            #     status = "Theo huong"
+                        else:
+                            print("Đối tượng không nằm trong ROI")
+
+
+
+
 
                     # # Cập nhật tracker
-                    # tracks = tracker.update(real_boxes, scores, classes)
+                    #
                     # # Vẽ các track lên frame
                     # frame = draw_tracks(frame, tracks, CLASSES)
 
